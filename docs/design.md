@@ -10,62 +10,32 @@ If you change anything in this doc that affects the Ch3 export contract, update 
 
 ## 1. Reader Experience Workflow
 
-The chapter ships with **two ways to work through the material**, and both end up at the same place: the reader running `notebooks/ch02.ipynb` against the `ch02` package.
+Two paths, same end state — the reader runs `notebooks/ch02.ipynb` against the `ch02` package.
 
-### Local path
+**Local:** `git clone`, `pip install -e ".[dev,data,sim]"`, open the notebook in Jupyter. Editable install picks up edits to `src/ch02/*.py` on the next import (use `%load_ext autoreload` for live-reload).
 
-For readers who want to clone, edit, and experiment freely:
-
-```bash
-git clone https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2.git
-cd lrm-code-chapter-2
-pip install -e ".[dev,data,sim]"
-jupyter notebook notebooks/ch02.ipynb
-```
-
-`pip install -e` creates an editable install — edits to `src/ch02/*.py` are picked up on the next import (use `%load_ext autoreload; %autoreload 2` in the notebook for live-reload during a session). The reader can browse package source alongside the notebook.
-
-### Colab path
-
-For readers without a local Python setup, or who want a one-click "follow along" experience:
-
-1. The README has an **"Open in Colab" badge** linking to `notebooks/ch02.ipynb` via `https://colab.research.google.com/github/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2/blob/main/notebooks/ch02.ipynb`. One click loads the notebook in Colab.
-2. The notebook's first cell detects Colab and runs the Vulkan setup + `pip install` from this repo:
+**Colab:** README's "Open in Colab" badge loads `notebooks/ch02.ipynb` directly in Colab. The notebook's first cell detects Colab and runs the Vulkan + `pip install` recipe (full version in README):
 
 ```python
 import sys
 if "google.colab" in sys.modules:
-    # Vulkan ICDs for ManiSkill (full recipe in README)
-    !mkdir -p /usr/share/vulkan/icd.d
-    !wget -q https://raw.githubusercontent.com/haosulab/ManiSkill/main/docker/nvidia_icd.json
-    !wget -q https://raw.githubusercontent.com/haosulab/ManiSkill/main/docker/10_nvidia.json
-    !mv nvidia_icd.json /usr/share/vulkan/icd.d
-    !mv 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
-    !apt-get install -y --no-install-recommends libvulkan-dev
+    # ... 6 lines of Vulkan ICD setup (see README) ...
     !pip install -q "lrm-ch02[data,sim] @ git+https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2.git@<release-tag>"
 ```
 
-The reader never uploads anything. Colab pulls the notebook from GitHub; pip pulls the `ch02` package from the same repo. Both arrive in the runtime through independent mechanisms but end up at the same import paths.
+Reader never uploads anything. Colab pulls the notebook from GitHub; pip pulls the `ch02` package from the same repo.
 
-### How the reader writes code in either path while the package stays the same
+### Notebook ↔ package
 
-For **type-along** listings (e.g., the random agent in §2.1, the scripted policy in §2.2, the normalize functions in §2.5), the reader **writes the code in the notebook cell** as they read the book. After running the cell, the function lives in the notebook's Python namespace. Subsequent cells call it from there.
+**Type-along** listings (random agent, scripted policy, normalize functions) live in the notebook namespace — the reader writes the code in the cell, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch02/<module>.py` but is independent (no live binding) and serves tests, Ch3 imports, and editor cross-reference.
 
-The same function also exists in `src/ch02/<module>.py` — byte-for-byte equivalent — but it's not what the reader's notebook calls during a session. There is **no live binding** between the two: editing the notebook does not touch the package, and editing the package does not propagate into a running notebook. Two independent copies, kept consistent by the author at chapter-authoring time.
+**Provided utility** listings (viz helpers, dataloader plumbing) are one-line imports from the package — the reader doesn't retype.
 
-The package version exists for:
+The isolation means reader experiments in the notebook don't affect tests or downstream chapters.
 
-- **Tests** in `tests/` (you cannot easily test notebook code).
-- **Chapter 3+ imports** of the frozen contract (`make_pickplace_dataloader`, `normalize`, `denormalize`).
-- **Cross-reference** for advanced readers who want to read the canonical implementation in their editor.
+### Figures
 
-For **provided utility** listings (the visualization helpers, the dataloader plumbing), the notebook is a one-liner: `from ch02.viz import render_keyframes` and then a call. The reader does not retype the implementation; the package is the source of truth.
-
-The split means the reader's experiments are isolated. They can rewrite `scripted_policy` in their notebook to see what happens — tests still pass, Chapter 3 still imports the unmodified package version, nothing else breaks.
-
-### Figures: inline in both paths, saved locally only
-
-Figure-producing cells display plots inline in the notebook in both the local and Colab paths. The author's `fig.savefig("figures/figure_2_X.png", dpi=300)` calls — used to regenerate print-quality PNGs for the chapter draft — are gated to local-only runs and skipped under Colab. The reader sees the plot in the notebook; the author saves PNGs separately when generating chapter artifacts.
+Inline in both paths. `fig.savefig("figures/...")` is author-only — gated off in Colab, used locally to regenerate print-quality PNGs.
 
 ---
 
@@ -237,7 +207,7 @@ One notebook: `notebooks/ch02.ipynb`. Section headers mirror the chapter (`## 2.
 | API illustration (2.1, 2.4, 2.5, 2.6) | Full code, inline. They're short and the reader benefits from running them as-is. |
 | Provided utility (2.7, 2.8, 2.11) | `from ch02.viz import render_keyframes` (etc.) + a usage call. Implementation stays in the package. |
 
-**Shadowing is fine.** Listing 2.3 defines `scripted_policy` in the notebook namespace. Later, listing 2.8 calls `collect_actions(env, scripted_policy)` — that resolves to the notebook's version. Listing 2.11 (`make_pickplace_dataloader`) is imported from `ch02.pipeline`, which internally calls *its* version of `normalize` and `compute_stats`. Both implementations match the book listings byte-for-byte, so the divergence is invisible to the reader.
+Notebook/package shadowing mechanics are covered in §1.
 
 ### Figure conventions
 
@@ -302,7 +272,7 @@ def tiny_dataset(tmp_path_factory):
 
 @pytest.fixture
 def env_or_skip():
-    """Returns make_env() or skips if gym-lowcostrobot/mujoco unavailable."""
+    """Returns make_env() or skips if ManiSkill/SAPIEN unavailable."""
     ...
 ```
 
@@ -316,7 +286,7 @@ The tiny dataset is the load-bearing fixture — it lets `pipeline.py` tests run
 
 ### CI
 
-GitHub Actions: `pytest tests/ -m "not integration"` on push. Integration suite runs on a manual trigger or nightly cron with the MuJoCo install.
+GitHub Actions: `pytest tests/ -m "not integration"` on push. Integration suite runs on a manual trigger or nightly cron with the ManiSkill + Vulkan setup.
 
 ### Reader-facing test instruction
 
@@ -380,30 +350,9 @@ Pins:
 
 ### Lockfile
 
-Generated as a **release-time artifact**, not maintained during development. The strict pins on `mani-skill==3.0.1` and `lerobot==0.5.1` plus loose pins on stable foundations (torch, numpy, matplotlib) are sufficient for the development loop. When the chapter is ready to ship with the book, generate `requirements.txt` once via `pip-compile pyproject.toml --extra dev --extra data --extra sim -o requirements.txt` and commit it alongside the release tag. Readers who hit dep-drift issues get a one-line escape hatch: `pip install -r requirements.txt`.
+Generated as a **release-time artifact**, not maintained during development. Strict pins on `mani-skill==3.0.1` and `lerobot==0.5.1` plus loose pins on stable foundations cover the dev loop. At chapter release: `pip-compile pyproject.toml --extra dev --extra data --extra sim -o requirements.txt`. Readers who hit dep-drift get a one-line escape hatch.
 
-This is a deliberate choice to avoid ongoing lockfile-bump churn during the year+ of book development. The cost is that mid-development installs may resolve slightly different transitive deps over time — acceptable because direct pins on the load-bearing libraries are exact.
-
-### Install paths
-
-**Local (recommended):**
-```bash
-pip install -e ".[dev,data,sim]"
-```
-
-**Colab:** notebook's first cell:
-```python
-!pip install -q lerobot==<PIN> gym-lowcostrobot==<PIN> mujoco
-!git clone https://github.com/<org>/lrm-code-chapter-2.git
-%cd lrm-code-chapter-2
-!pip install -q -e .
-```
-
-The Colab cell is markdown-guarded with "skip if running locally" and removed from the canonical run before commit (the cleared-output state covers this).
-
-### Reproducibility floor
-
-The combination `(lerobot=PIN, gym-lowcostrobot=PIN, torch>=2.1, Python 3.10)` is what we test against. Readers on other combinations may need to adjust; the README will say so.
+Install paths and the Colab recipe live in §1 and the README.
 
 ---
 
@@ -467,8 +416,8 @@ when the source is clearer.
    - Wait for the reader to run it or ask a question.
    - If they ran it successfully, ask one comprehension-check question before
      moving on. ("What happens if you change `seed=42` to a different value?")
-   - If they hit an error, help debug. Common failure modes: MuJoCo install,
-     dataset download, version mismatch.
+   - If they hit an error, help debug. Common failure modes: SAPIEN/Vulkan
+     setup, dataset download, version mismatch.
 3. At the end of each section (2.1–2.5):
    - Summarize what was built in 2–3 sentences.
    - State an **honest scoping disclaimer** — what this section *did not*
