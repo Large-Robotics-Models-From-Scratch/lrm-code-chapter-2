@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# Data
+data/
+*.parquet
+*.arrow
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Local agent config overrides
+.lrm-agents.yml
+
+# Claude Code symlinks (set up locally per machine via program.md)
+# Note: .claude/agents/chapter-02-guide.md is a symlink to the
+# canonical agent at agents/chapter-02-guide.md, which IS committed.
+.claude/
