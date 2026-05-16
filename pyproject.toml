@@ -18,7 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 # Simulator. ManiSkill3 (Apache 2.0, SAPIEN-based) ships SO-100 as a
 # first-class robot and SO100GraspCube as a sim2real digital twin. See
-# docs/design.md §4 for the rationale and the lerobot-sim2real notes.
+# docs/design.md §5 for the rationale and the lerobot-sim2real notes.
 # Colab readers must run the 7-cell Vulkan setup documented in the
 # README before this extra is usable.
 sim = [

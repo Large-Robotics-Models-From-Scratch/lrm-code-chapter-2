@@ -8,7 +8,68 @@ If you change anything in this doc that affects the Ch3 export contract, update 
 
 ---
 
-## 1. Module APIs
+## 1. Reader Experience Workflow
+
+The chapter ships with **two ways to work through the material**, and both end up at the same place: the reader running `notebooks/ch02.ipynb` against the `ch02` package.
+
+### Local path
+
+For readers who want to clone, edit, and experiment freely:
+
+```bash
+git clone https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2.git
+cd lrm-code-chapter-2
+pip install -e ".[dev,data,sim]"
+jupyter notebook notebooks/ch02.ipynb
+```
+
+`pip install -e` creates an editable install — edits to `src/ch02/*.py` are picked up on the next import (use `%load_ext autoreload; %autoreload 2` in the notebook for live-reload during a session). The reader can browse package source alongside the notebook.
+
+### Colab path
+
+For readers without a local Python setup, or who want a one-click "follow along" experience:
+
+1. The README has an **"Open in Colab" badge** linking to `notebooks/ch02.ipynb` via `https://colab.research.google.com/github/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2/blob/main/notebooks/ch02.ipynb`. One click loads the notebook in Colab.
+2. The notebook's first cell detects Colab and runs the Vulkan setup + `pip install` from this repo:
+
+```python
+import sys
+if "google.colab" in sys.modules:
+    # Vulkan ICDs for ManiSkill (full recipe in README)
+    !mkdir -p /usr/share/vulkan/icd.d
+    !wget -q https://raw.githubusercontent.com/haosulab/ManiSkill/main/docker/nvidia_icd.json
+    !wget -q https://raw.githubusercontent.com/haosulab/ManiSkill/main/docker/10_nvidia.json
+    !mv nvidia_icd.json /usr/share/vulkan/icd.d
+    !mv 10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+    !apt-get install -y --no-install-recommends libvulkan-dev
+    !pip install -q "lrm-ch02[data,sim] @ git+https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2.git@<release-tag>"
+```
+
+The reader never uploads anything. Colab pulls the notebook from GitHub; pip pulls the `ch02` package from the same repo. Both arrive in the runtime through independent mechanisms but end up at the same import paths.
+
+### How the reader writes code in either path while the package stays the same
+
+For **type-along** listings (e.g., the random agent in §2.1, the scripted policy in §2.2, the normalize functions in §2.5), the reader **writes the code in the notebook cell** as they read the book. After running the cell, the function lives in the notebook's Python namespace. Subsequent cells call it from there.
+
+The same function also exists in `src/ch02/<module>.py` — byte-for-byte equivalent — but it's not what the reader's notebook calls during a session. There is **no live binding** between the two: editing the notebook does not touch the package, and editing the package does not propagate into a running notebook. Two independent copies, kept consistent by the author at chapter-authoring time.
+
+The package version exists for:
+
+- **Tests** in `tests/` (you cannot easily test notebook code).
+- **Chapter 3+ imports** of the frozen contract (`make_pickplace_dataloader`, `normalize`, `denormalize`).
+- **Cross-reference** for advanced readers who want to read the canonical implementation in their editor.
+
+For **provided utility** listings (the visualization helpers, the dataloader plumbing), the notebook is a one-liner: `from ch02.viz import render_keyframes` and then a call. The reader does not retype the implementation; the package is the source of truth.
+
+The split means the reader's experiments are isolated. They can rewrite `scripted_policy` in their notebook to see what happens — tests still pass, Chapter 3 still imports the unmodified package version, nothing else breaks.
+
+### Figures: inline in both paths, saved locally only
+
+Figure-producing cells display plots inline in the notebook in both the local and Colab paths. The author's `fig.savefig("figures/figure_2_X.png", dpi=300)` calls — used to regenerate print-quality PNGs for the chapter draft — are gated to local-only runs and skipped under Colab. The reader sees the plot in the notebook; the author saves PNGs separately when generating chapter artifacts.
+
+---
+
+## 2. Module APIs
 
 The chapter plan's module mapping is the starting point. This section pins every public function signature (the agents' `listing-check` enforces these against the plan's listings).
 
@@ -154,7 +215,7 @@ def make_pickplace_dataloader(
 
 ---
 
-## 2. Notebook Architecture
+## 3. Notebook Architecture
 
 ### Layout
 
@@ -207,7 +268,7 @@ Paths are relative to `notebooks/`. Figure 2.1 is reused from Chapter 1 — no c
 
 ---
 
-## 3. Test Strategy
+## 4. Test Strategy
 
 ### Layout
 
@@ -263,7 +324,7 @@ One line in the README: "Run `pytest tests/` after install to smoke-test your se
 
 ---
 
-## 4. Dependency Strategy
+## 5. Dependency Strategy
 
 ### Python version
 
@@ -346,7 +407,7 @@ The combination `(lerobot=PIN, gym-lowcostrobot=PIN, torch>=2.1, Python 3.10)` i
 
 ---
 
-## 5. Chapter-2 Agent Prompt
+## 6. Chapter-2 Agent Prompt
 
 ### Location
 
