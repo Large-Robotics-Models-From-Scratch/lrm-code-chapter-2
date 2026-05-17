@@ -122,6 +122,13 @@ print(f"Action space: {env.action_space}")      #G
 - #F Reset returns the initial observation dictionary and an info dict
 - #G Action is `Box(6,)` — one delta per SO-100 joint, gripper included as joint 6
 
+**Expected output:**
+```
+Observation keys: ['agent', 'extra', 'sensor_data']
+Action space: Box(-1.0, 1.0, (6,), float32)
+```
+*Exact key names depend on the ManiSkill version; verify at implementation time per the editorial note below.*
+
 **Editorial note (implementation):** Table 2.1's observation/action schema and listings 2.3–2.4's scripted policy reference gym-lowcostrobot-style keys (`arm_qpos`, `cube_pos`, etc.); ManiSkill's actual observation dict uses different keys (`agent.qpos`, `extra.tcp_pose`, etc.) which will be confirmed and updated when PR 2 and PR 3 land.
 
 The `run_random_agent` function in listing 2.2 executes the Gymnasium interaction loop with uniformly sampled actions and reports the success rate over a fixed number of episodes. This is the performance floor every learned policy must clear.
@@ -153,16 +160,28 @@ print(f"Random agent: success={success_rate:.0%} "
 - #B The env reports success when the cube reaches the target zone
 - #C Expect near-zero success — flailing the arm rarely grasps anything
 
+**Expected output:**
+```
+Random agent: success=0% return=-0.42
+```
+*Numbers vary by seed; what matters is that success rate is effectively zero and return is negative (the env's distance-shaping reward dominates).*
+
 **Callout Box: "WHAT IS GYMNASIUM?"**
 - Gymnasium (formerly OpenAI Gym) is the standard Python API for simulation and reinforcement-learning environments.
 - Every env exposes `reset()` and `step(action)` — a universal interface regardless of the task or embodiment.
 - LeRobot and `gym-lowcostrobot` register their environments as Gymnasium envs, so the same code patterns work for sim, real-hardware wrappers, and benchmark tasks across the ecosystem.
 
 **Callout Box: "WHY SO-100 IN SIM, SO-101 ON HARDWARE?"**
-- The `gym-lowcostrobot` simulator was built for the SO-100 arm. SO-101 is the newer revision with slightly different servos and tuning.
+- ManiSkill3 ships the SO-100 as a first-class robot (`mani_skill/agents/robots/so100/`). SO-101 is the newer revision with slightly different servos and tuning.
 - Observation and action interfaces are identical, so policy training is unaffected.
 - The residual kinematic gap is real but small, and isolating it to a single sim-to-real chapter (Chapter 9) is cleaner pedagogy than pretending it does not exist.
 - This is the canonical sim-to-real problem in miniature, and Chapter 9 is built around it.
+
+**Callout Box: "PITFALL — SAPIEN/Vulkan setup on Colab"**
+- ManiSkill3 renders through SAPIEN, which needs Vulkan installable client drivers (ICDs). Colab runtimes don't ship them by default.
+- The symptom is a confusing `vk::Result::eErrorIncompatibleDriver` or `Cannot find any valid ICD` traceback the first time `env.reset()` runs — *not* when ManiSkill imports.
+- Run the seven-line Vulkan setup recipe documented in the repo's README before installing `mani-skill`. The recipe is copied verbatim from ManiSkill's official quickstart notebook and works on the free-tier T4.
+- On local Linux/macOS this is rarely an issue — system Vulkan drivers are usually already installed.
 
 **Figure 2.2: The SO-101 Pick-and-Place Task**
 - Annotated screenshot showing the arm in start pose, the cube on the workspace, the target zone outlined on the table, and a small inset of the wrist-camera view.
@@ -183,6 +202,8 @@ print(f"Random agent: success={success_rate:.0%} "
 | `image_top` | (224, 224, 3) | uint8 | Top-down RGB camera |
 | `image_wrist` | (224, 224, 3) | uint8 | Wrist-mounted RGB camera |
 | Action | (7,) | float32 | Six joint position deltas + gripper command |
+
+**Exercise 2.1: Joint-space vs. end-effector-space control.** Call `make_env(control_mode="pd_ee_delta_pose")` instead of the default joint-space mode and re-run the random agent. The action space shape changes from `Box(7,)` to a Cartesian delta pose plus gripper. Do random rollouts succeed any more often? Why or why not? *Tip: end-effector control hides one form of difficulty (joint coordination) while exposing another (workspace boundaries).*
 
 **Transition:** "The random agent has no chance. Can a simple rule do better?"
 
@@ -301,10 +322,18 @@ print(f"Scripted agent success rate: {rate:.0%}")       #B
 - #A The state machine carries its phase across steps via this dict
 - #B Expect a moderate success rate — better than random, far from expert
 
+**Expected output:**
+```
+Scripted agent success rate: 50%
+```
+*Anywhere from ~30% to ~70% is normal; the exact rate depends on cube spawn positions across seeds. The point is "substantially better than 0%, substantially below 100%" — the heuristic plateau.*
+
 **Callout Box: "WHY NOT JUST ENGINEER A BETTER HEURISTIC?"**
 - You could add error recovery, force feedback, retry-on-miss, and a finer phase decomposition.
 - But every improvement requires more hand-coded rules, and each new edge case (different cube color, novel target position, occlusion) compounds the complexity.
 - This is the "long tail" argument from Chapter 1 in miniature: heuristics plateau, learned policies keep improving with more data.
+
+**Exercise 2.2: Grasp-failure recovery.** Extend `scripted_policy` with a new phase that detects when the cube has not risen above a height threshold after the `lift` phase, returns to `approach`, and retries the grasp. How much does success rate improve? At what point does adding phases stop helping? *Tip: instrument `state` with a `retries` counter and bail out at three retries.*
 
 **Transition:** "The scripted policy shows what one person's intuition can achieve in an afternoon. Expert demonstrations show what practiced teleoperation looks like as data."
 
@@ -357,6 +386,16 @@ print(f"Features: {list(dataset.features.keys())}")     #C
 - #B Total number of (observation, action) frames across all episodes
 - #C Feature names include the state vector, two camera streams, the action, and episode/frame metadata
 
+**Expected output:**
+```
+Total frames: 18421
+Episodes: 50
+Features: ['observation.state', 'observation.images.top',
+           'observation.images.wrist', 'action', 'episode_index',
+           'frame_index', 'timestamp', 'next.done']
+```
+*Frame and episode counts depend on which dataset is pinned. The feature list shape is what matters: a state vector, two image streams, an action, and trajectory metadata.*
+
 Listing 2.6 indexes into the dataset to inspect a single frame's shape and dtype, then collects every frame belonging to episode zero to confirm episode-length variation. This concretizes the abstract feature schema for the reader.
 
 **Listing 2.6: Inspecting a single frame and one episode**
@@ -375,6 +414,20 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 - #A Access a single frame by integer index — returns a dictionary of tensors and scalars
 - #B Collect all frame indices belonging to episode 0 to inspect a complete trajectory
 
+**Expected output:**
+```
+  observation.state: shape=torch.Size([7]), dtype=torch.float32
+  observation.images.top: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
+  observation.images.wrist: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
+  action: shape=torch.Size([7]), dtype=torch.float32
+  episode_index: 0
+  frame_index: 0
+  timestamp: 0.0
+
+Episode 0 length: 348 steps
+```
+*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Episode lengths vary from ~200 to ~500 frames.*
+
 **Table 2.2: LeRobot SO-101 Pick-and-Place Dataset Features**
 
 | Feature | Shape | Type | Description |
@@ -392,6 +445,8 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 - Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 7)`.
 - This enables **action chunking** — predicting a short sequence of future actions instead of one at a time.
 - Action chunking improves policy smoothness and is the foundation for the ACT and diffusion-policy heads in Chapters 4 and 5.
+
+**Exercise 2.3: Single-episode statistics.** Compute mean and std of `observation.state` across the frames of a single episode, then compare to the statistics across the whole dataset. How large is the discrepancy on the joint dimensions? On the gripper? *Tip: this is the basic argument for normalizing on the *dataset*, not per-batch — and it foreshadows why a tiny fine-tuning dataset can destabilize a model that was trained with population-level statistics.*
 
 **Transition:** "Numbers in a table tell you the data's shape. Plots and rendered frames tell you what success actually looks like."
 
@@ -645,6 +700,13 @@ print(f"image range: [{batch['observation.images.top'].min():.2f},"
 - #C Image features are scaled to `[0, 1]` — a different normalization path
 - #D After normalization, per-dimension state mean should be near zero across a batch
 
+**Expected output:**
+```
+state mean per dim: tensor([-0.01,  0.02,  0.00, -0.03,  0.01,  0.00, -0.02])
+image range: [0.00, 1.00]
+```
+*Each state-mean component should sit within ~±0.1 of zero (within-batch noise around the dataset-level mean of zero); image pixel range should land in `[0, 1]` after the `x / 255` step. Any wildly off value here means a stat dict was mis-keyed or a feature slipped past the collate function.*
+
 **Callout Box: "Z-SCORE vs. MIN-MAX NORMALIZATION"**
 - **Z-score** — `(x - mean) / std`. Centers at zero, scales by spread. Preferred when features are roughly Gaussian, as joint angles and recorded actions tend to be.
 - **Min-max** — `(x - min) / (max - min)`. Scales to `[0, 1]`. Preferred when bounded outputs are needed, as with image pixels handed to a vision encoder expecting `[0, 1]`.
@@ -664,6 +726,24 @@ print(f"image range: [{batch['observation.images.top'].min():.2f},"
 - Flow diagram: Hugging Face Hub → LeRobotDataset → compute_stats → DataLoader with normalize-in-collate → training batch {state, images, action} → Chapter 3 model.
 - Caption: "The complete data pipeline built in this chapter. Expert demonstrations are loaded from the Hub, normalization statistics are computed once, and a DataLoader applies the right normalization to each feature type at batch time. `make_pickplace_dataloader()` encapsulates the entire flow as the API contract for Chapter 3."
 
+**Exercise 2.4: Min-max normalization on actions.** Replace `compute_stats` and `normalize` with min-max scaling — `(x - min) / (max - min)` — for `observation.state` and `action` only. Verify the round-trip still works to floating-point precision. Then draw one batch and compare per-dimension batch means against z-score: which is closer to zero? Why does that matter for downstream learning? *Tip: think about how the loss gradient flows through a denormalized action prediction at the start of training, before the model has learned anything.*
+
+### 2.5.6 Pipeline performance across hardware
+
+**Table 2.3: Chapter 2 pipeline timings**
+
+The point of this table is to calibrate the reader's expectations before they hit Chapter 3's training loop. None of these numbers are large; everything in Chapter 2 fits comfortably on a free-tier T4.
+
+| Step | Colab T4 (free) | RTX 4090 | A100 (Colab Pro) |
+|------|-----------------|----------|------------------|
+| First-time dataset download (~1.5 GB) | ~3-5 min (network bound) | ~1-2 min | ~1-2 min |
+| `compute_stats` (single pass over dataset) | ~30-60 s | ~10-20 s | ~10-20 s |
+| One pipeline smoke (batch of 32 with images) | < 2 s | < 1 s | < 1 s |
+| Random-agent rollout (10 episodes) | ~20-40 s | ~10-15 s | ~10-15 s |
+| Scripted-agent rollout (10 episodes) | ~30-60 s | ~15-25 s | ~15-25 s |
+
+Numbers are wall-clock and approximate; rerun on first install and pin in the README on chapter release. The Vulkan setup on Colab adds a one-time ~20-30 second cell. Subsequent runs in the same kernel session have no setup overhead.
+
 ---
 
 ## Section 2.6: Summary
@@ -672,14 +752,38 @@ print(f"image range: [{batch['observation.images.top'].min():.2f},"
 
 Comprehensive bulleted summary:
 
-- `PickPlaceCube` is a single-object pick-and-place task on a 6-DOF arm with a parallel-jaw gripper, served by `gym-lowcostrobot` over MuJoCo. It is the carrier task and the carrier embodiment for the rest of the book.
+- `PickCubeSO100-v1` is a single-object pick-and-place task on a 6-DOF arm with a parallel-jaw gripper, served by ManiSkill3 over SAPIEN. It is the carrier task and the carrier embodiment for the rest of the book.
 - The Gymnasium API provides a universal interface — `reset()` returns an initial observation, `step(action)` returns the next observation, reward, and termination flags. Every environment in this book, in sim and on hardware, exposes this interface.
 - A random agent on a 6-DOF arm essentially never succeeds. A multi-phase scripted policy (approach → descend → grasp → lift → transport → place → release) raises the success rate but plateaus far below expert performance because it cannot recover from misalignment or adapt to contact dynamics.
 - Expert demonstrations from teleoperation are stored in the LeRobot dataset format on Hugging Face Hub. Each frame includes joint state, two camera views, the recorded action, and episode/frame metadata.
 - LeRobot's `delta_timestamps` mechanism enables requesting data at relative time offsets — the foundation for action chunking in later chapters.
 - Visualizing expert action distributions per-joint reveals structured, multi-modal patterns that neither random sampling nor a hand-coded heuristic can reproduce. Visualizing expert joint trajectories shows that successful policies must be conditional, not memorized.
 - Neural networks need normalized inputs. Z-score normalization is applied to state and action; images are scaled to `[0, 1]`. Denormalization recovers environment-scale actions for use with `env.step()`.
-- The chapter's primary export is `make_pickplace_dataloader(dataset_id, batch_size, shuffle)`. It is the API contract for Chapter 3 and is parameterized on `dataset_id` so later chapters can swap in custom datasets without changing the interface.
+- The chapter's primary export is `make_pickplace_dataloader(dataset_id, batch_size, shuffle)`, parameterized on `dataset_id` so later chapters can swap in custom datasets without changing the interface.
+- Chapter 3 picks up exactly where this chapter ends: same DataLoader, same normalization conventions, same SO-100 embodiment. It adds the part this chapter deliberately left out — a model that learns to predict actions from observations, using a vision-language backbone and the first incarnation of a generative robot policy.
+
+---
+
+## Further Reading
+
+A short, opinionated reading list for readers who want to dig deeper into the topics this chapter touched. References are grouped by chapter section; ordering within each group is "start here" first.
+
+**Simulator and embodiment**
+- *ManiSkill3: GPU-Parallelized Robotics Simulation and Rendering* (Tao et al., 2024) — the paper behind the simulator we use. arXiv:2410.00425.
+- *SO-ARM100 hardware design* (The Robot Studio, ongoing) — the open-source CAD and BOM for the physical arm. <https://github.com/TheRobotStudio/SO-ARM100>
+- *SO-101 release notes* (Hugging Face LeRobot, 2026) — what changed from SO-100 and why. Linked from the LeRobot docs.
+
+**LeRobot dataset format**
+- *LeRobot: State-of-the-art ML for real-world robotics in PyTorch* (Cadene et al., 2024) — the framework's design document. <https://github.com/huggingface/lerobot>
+- *Hub datasets for robot learning* — the SO-100/SO-101 pick-and-place datasets on the Hub, with episode-count and quality notes per dataset card. <https://huggingface.co/datasets?other=lerobot>
+
+**Pick-and-place as a learning benchmark**
+- *Implicit Behavioral Cloning* (Florence et al., CoRL 2021) — the PushT task and an early energy-based BC formulation. We chose pick-and-place over PushT for the reasons in §2.2's "Why pick-and-place from Chapter 2," but PushT is a useful foil. arXiv:2109.00137.
+- *Action Chunking with Transformers* (Zhao et al., RSS 2023) — the original ACT paper. The `delta_timestamps` mechanism in §2.3 is the data-side enabler for ACT, which Chapter 4 builds. arXiv:2304.13705.
+- *Diffusion Policy* (Chi et al., RSS 2023) — Chapter 5's continuous-action approach uses the same normalized DataLoader we built here. arXiv:2303.04137.
+
+**Normalization for robot policies**
+- *Behavior Cloning, Pitfalls, and Lessons* — surveys of why action-distribution normalization matters more for robot policies than for image classifiers. Pointer in the chapter's source repo.
 
 ---
 
@@ -718,10 +822,20 @@ Comprehensive bulleted summary:
 |---------|---------|---------|
 | "WHAT IS GYMNASIUM?" | 2.1 | Define the simulation API for ML readers |
 | "WHY SO-100 IN SIM, SO-101 ON HARDWARE?" | 2.1 | Address the embodiment-gap question up front |
+| "PITFALL — SAPIEN/Vulkan setup on Colab" | 2.1 | Surface the most common first-time install failure mode |
 | "WHY NOT JUST ENGINEER A BETTER HEURISTIC?" | 2.2 | Connect to Chapter 1's long-tail argument |
 | "WHAT IS delta_timestamps?" | 2.3 | Explain LeRobot's temporal indexing mechanism |
 | "Z-SCORE vs. MIN-MAX NORMALIZATION" | 2.5 | Normalization strategy rationale |
 | "THE CHAPTER 3 CONTRACT" | 2.5 | Define the API boundary between chapters |
+
+## Exercises Summary
+
+| Exercise | Title | Section | Difficulty | Solution location |
+|----------|-------|---------|------------|-------------------|
+| 2.1 | Joint-space vs. end-effector-space control | 2.1 (end) | Light | Appendix |
+| 2.2 | Grasp-failure recovery in the scripted policy | 2.2 (end) | Light-moderate | Appendix |
+| 2.3 | Single-episode vs. dataset-level statistics | 2.3 (end) | Light | Appendix |
+| 2.4 | Min-max normalization on actions | 2.5 (end) | Light-moderate | Appendix |
 
 ## Table Summary
 
@@ -729,6 +843,7 @@ Comprehensive bulleted summary:
 |-------|-------------|---------|
 | 2.1 | SO-101 Observation and Action Spaces | 2.1 |
 | 2.2 | LeRobot SO-101 Pick-and-Place Dataset Features | 2.3 |
+| 2.3 | Chapter 2 pipeline timings across hardware | 2.5.6 |
 
 ## Chapter 2 Exports for Chapter 3
 
