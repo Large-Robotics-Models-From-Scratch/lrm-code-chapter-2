@@ -49,7 +49,7 @@ This is the simplest version of the task family the reader will end on. One cube
 ## Chapter Opening
 
 ### "This chapter covers" block (5 bullets)
-- Setting up the SO-101 simulation environment using `gym-lowcostrobot` and the Gymnasium interface
+- Setting up the SO-101 simulation environment using ManiSkill3 and the Gymnasium interface
 - Understanding observations, actions, episodes, and rewards for a 6-DOF arm with a gripper
 - Writing a scripted pick-and-place policy as a state machine, and observing its failure modes
 - Loading, inspecting, and visualizing expert demonstration data from the LeRobot Hub
@@ -57,7 +57,11 @@ This is the simplest version of the task family the reader will end on. One cube
 
 ### Hook paragraphs (2 paragraphs)
 - **Paragraph 1:** A robot policy is only as good as the data that trains it — and only as transferable as the embodiment that produced it. Before writing a single line of model code, you need three things: a simulated arm to act in, demonstrations from that arm to learn from, and a pipeline that feeds both into training. This chapter builds all three, on the embodiment you will use for the rest of the book.
-- **Paragraph 2:** You will work with `PickPlaceCube`, a task where an SO-101 arm in simulation must grasp a cube from a starting position and release it inside a target zone. It looks simple, and that is the point. Pick-and-place is complex enough to expose why hand-coded heuristics struggle (contact dynamics, gripper timing, recovery from misalignment) yet simple enough to train on a laptop in an evening. By the end of this chapter, you will have a working data pipeline that Chapter 3 plugs directly into — and an embodiment that does not change again until Chapter 11.
+- **Paragraph 2:** You will work with `PickCubeSO100-v1`, a task where an SO-101 arm in simulation must grasp a cube from a starting position and release it inside a target zone. It looks simple, and that is the point. Pick-and-place is complex enough to expose why hand-coded heuristics struggle (contact dynamics, gripper timing, recovery from misalignment) yet simple enough to train on a laptop in an evening. By the end of this chapter, you will have a working data pipeline that Chapter 3 plugs directly into — and an embodiment that does not change again until Chapter 11.
+
+### Section preview paragraph
+
+Section 2.1 sets up the ManiSkill3 simulator and the Gymnasium interface, then runs a random agent to establish a performance floor. Section 2.2 introduces a scripted state-machine policy and observes its failure modes — the motivation for learning from data. Section 2.3 loads expert demonstrations from the LeRobot Hub and walks through the dataset's feature schema, including the `delta_timestamps` mechanism that later chapters use for action chunking. Section 2.4 visualizes the expert data side-by-side with the scripted and random baselines, making the policy-gap concrete. Section 2.5 closes the loop: normalization statistics, the `normalize`/`denormalize` functions, and the `make_pickplace_dataloader` export that Chapter 3 imports unchanged.
 
 **Figure 2.1: Where this chapter sits in the book**
 - Reuse the book-wide roadmap diagram from Figure 1.7 with the Chapter 2 stage highlighted ("Simulation & Data"). Stages: Foundations (Ch 1-2, current) → Architecture & Imitation (Ch 3-5) → Scaling (Ch 6-7) → Advanced (Ch 8-9) → Deployment (Ch 10-11).
