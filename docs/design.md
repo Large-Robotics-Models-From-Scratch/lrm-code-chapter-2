@@ -8,7 +8,38 @@ If you change anything in this doc that affects the Ch3 export contract, update 
 
 ---
 
-## 1. Module APIs
+## 1. Reader Experience Workflow
+
+Two paths, same end state — the reader runs `notebooks/ch02.ipynb` against the `ch02` package.
+
+**Local:** `git clone`, `pip install -e ".[dev,data,sim]"`, open the notebook in Jupyter. Editable install picks up edits to `src/ch02/*.py` on the next import (use `%load_ext autoreload` for live-reload).
+
+**Colab:** README's "Open in Colab" badge loads `notebooks/ch02.ipynb` directly in Colab. The notebook's first cell detects Colab and runs the Vulkan + `pip install` recipe (full version in README):
+
+```python
+import sys
+if "google.colab" in sys.modules:
+    # ... 6 lines of Vulkan ICD setup (see README) ...
+    !pip install -q "lrm-ch02[data,sim] @ git+https://github.com/Large-Robotics-Models-From-Scratch/lrm-code-chapter-2.git@<release-tag>"
+```
+
+Reader never uploads anything. Colab pulls the notebook from GitHub; pip pulls the `ch02` package from the same repo.
+
+### Notebook ↔ package
+
+**Type-along** listings (random agent, scripted policy, normalize functions) live in the notebook namespace — the reader writes the code in the cell, subsequent cells call their version. A byte-for-byte equivalent exists in `src/ch02/<module>.py` but is independent (no live binding) and serves tests, Ch3 imports, and editor cross-reference.
+
+**Provided utility** listings (viz helpers, dataloader plumbing) are one-line imports from the package — the reader doesn't retype.
+
+The isolation means reader experiments in the notebook don't affect tests or downstream chapters.
+
+### Figures
+
+Inline in both paths. `fig.savefig("figures/...")` is author-only — gated off in Colab, used locally to regenerate print-quality PNGs.
+
+---
+
+## 2. Module APIs
 
 The chapter plan's module mapping is the starting point. This section pins every public function signature (the agents' `listing-check` enforces these against the plan's listings).
 
@@ -154,7 +185,7 @@ def make_pickplace_dataloader(
 
 ---
 
-## 2. Notebook Architecture
+## 3. Notebook Architecture
 
 ### Layout
 
@@ -176,7 +207,7 @@ One notebook: `notebooks/ch02.ipynb`. Section headers mirror the chapter (`## 2.
 | API illustration (2.1, 2.4, 2.5, 2.6) | Full code, inline. They're short and the reader benefits from running them as-is. |
 | Provided utility (2.7, 2.8, 2.11) | `from ch02.viz import render_keyframes` (etc.) + a usage call. Implementation stays in the package. |
 
-**Shadowing is fine.** Listing 2.3 defines `scripted_policy` in the notebook namespace. Later, listing 2.8 calls `collect_actions(env, scripted_policy)` — that resolves to the notebook's version. Listing 2.11 (`make_pickplace_dataloader`) is imported from `ch02.pipeline`, which internally calls *its* version of `normalize` and `compute_stats`. Both implementations match the book listings byte-for-byte, so the divergence is invisible to the reader.
+Notebook/package shadowing mechanics are covered in §1.
 
 ### Figure conventions
 
@@ -207,7 +238,7 @@ Paths are relative to `notebooks/`. Figure 2.1 is reused from Chapter 1 — no c
 
 ---
 
-## 3. Test Strategy
+## 4. Test Strategy
 
 ### Layout
 
@@ -241,7 +272,7 @@ def tiny_dataset(tmp_path_factory):
 
 @pytest.fixture
 def env_or_skip():
-    """Returns make_env() or skips if gym-lowcostrobot/mujoco unavailable."""
+    """Returns make_env() or skips if ManiSkill/SAPIEN unavailable."""
     ...
 ```
 
@@ -255,7 +286,7 @@ The tiny dataset is the load-bearing fixture — it lets `pipeline.py` tests run
 
 ### CI
 
-GitHub Actions: `pytest tests/ -m "not integration"` on push. Integration suite runs on a manual trigger or nightly cron with the MuJoCo install.
+GitHub Actions: `pytest tests/ -m "not integration"` on push. Integration suite runs on a manual trigger or nightly cron with the ManiSkill + Vulkan setup.
 
 ### Reader-facing test instruction
 
@@ -263,7 +294,7 @@ One line in the README: "Run `pytest tests/` after install to smoke-test your se
 
 ---
 
-## 4. Dependency Strategy
+## 5. Dependency Strategy
 
 ### Python version
 
@@ -319,34 +350,13 @@ Pins:
 
 ### Lockfile
 
-Generated as a **release-time artifact**, not maintained during development. The strict pins on `mani-skill==3.0.1` and `lerobot==0.5.1` plus loose pins on stable foundations (torch, numpy, matplotlib) are sufficient for the development loop. When the chapter is ready to ship with the book, generate `requirements.txt` once via `pip-compile pyproject.toml --extra dev --extra data --extra sim -o requirements.txt` and commit it alongside the release tag. Readers who hit dep-drift issues get a one-line escape hatch: `pip install -r requirements.txt`.
+Generated as a **release-time artifact**, not maintained during development. Strict pins on `mani-skill==3.0.1` and `lerobot==0.5.1` plus loose pins on stable foundations cover the dev loop. At chapter release: `pip-compile pyproject.toml --extra dev --extra data --extra sim -o requirements.txt`. Readers who hit dep-drift get a one-line escape hatch.
 
-This is a deliberate choice to avoid ongoing lockfile-bump churn during the year+ of book development. The cost is that mid-development installs may resolve slightly different transitive deps over time — acceptable because direct pins on the load-bearing libraries are exact.
-
-### Install paths
-
-**Local (recommended):**
-```bash
-pip install -e ".[dev,data,sim]"
-```
-
-**Colab:** notebook's first cell:
-```python
-!pip install -q lerobot==<PIN> gym-lowcostrobot==<PIN> mujoco
-!git clone https://github.com/<org>/lrm-code-chapter-2.git
-%cd lrm-code-chapter-2
-!pip install -q -e .
-```
-
-The Colab cell is markdown-guarded with "skip if running locally" and removed from the canonical run before commit (the cleared-output state covers this).
-
-### Reproducibility floor
-
-The combination `(lerobot=PIN, gym-lowcostrobot=PIN, torch>=2.1, Python 3.10)` is what we test against. Readers on other combinations may need to adjust; the README will say so.
+Install paths and the Colab recipe live in §1 and the README.
 
 ---
 
-## 5. Chapter-2 Agent Prompt
+## 6. Chapter-2 Agent Prompt
 
 ### Location
 
@@ -406,8 +416,8 @@ when the source is clearer.
    - Wait for the reader to run it or ask a question.
    - If they ran it successfully, ask one comprehension-check question before
      moving on. ("What happens if you change `seed=42` to a different value?")
-   - If they hit an error, help debug. Common failure modes: MuJoCo install,
-     dataset download, version mismatch.
+   - If they hit an error, help debug. Common failure modes: SAPIEN/Vulkan
+     setup, dataset download, version mismatch.
 3. At the end of each section (2.1–2.5):
    - Summarize what was built in 2–3 sentences.
    - State an **honest scoping disclaimer** — what this section *did not*
