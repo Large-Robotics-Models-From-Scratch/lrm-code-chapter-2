@@ -86,7 +86,7 @@ Section 2.1 sets up the ManiSkill3 simulator and the Gymnasium interface, then r
 ### 2.1.2 The Gymnasium Interface
 - Define the core loop: `reset → step → step → ... → done`
 - **Observation space:** What the agent sees — joint positions and velocities for six arm joints, gripper state, cube pose, target pose, and (optionally) two camera images (top-down and wrist-mounted)
-- **Action space:** What the agent can do — a 7-DOF continuous action (six joint position deltas plus one gripper command in `[-1, 1]`)
+- **Action space:** What the agent can do — a 6-DOF continuous action in `[-1, 1]`, one delta per SO-100 joint (the gripper is joint 6, not a separate dimension)
 - **Episode:** One complete pick-and-place attempt from reset to termination
 - **Step:** A single (observation, action, reward, next_observation) transition at the sim's control frequency
 - **Reward:** Pick-and-place uses a shaped reward — distance to cube while approaching, lift bonus during grasp, distance-to-target while transporting, and a success bonus when the cube enters the target zone
@@ -114,7 +114,7 @@ obs, info = env.reset(seed=42)                   #F
 print(f"Observation keys: {list(obs.keys())}")
 print(f"Action space: {env.action_space}")      #G
 ```
-- #A Gymnasium API
+- #A Provides the standard `reset` / `step` interface used by every env in this book — sim, real-hardware wrapper, or benchmark
 - #B Importing `mani_skill.envs` registers `PickCubeSO100-v1` and the rest of the SO-100 task family
 - #C Create the SO-100 pick-and-place environment
 - #D Return RGB camera observations (alternatives: `"state"`, `"rgbd"`, `"state_dict"`)
@@ -133,7 +133,7 @@ Action space: Box(-1.0, 1.0, (6,), float32)
 
 The `run_random_agent` function in listing 2.2 executes the Gymnasium interaction loop with uniformly sampled actions and reports the success rate over a fixed number of episodes. This is the performance floor every learned policy must clear.
 
-**Listing 2.2: Running a random agent on PickPlaceCube**
+**Listing 2.2: Running a random agent on PickCubeSO100-v1**
 ```python
 import numpy as np
 
@@ -148,7 +148,7 @@ def run_random_agent(env, n_episodes=10):
             obs, reward, terminated, truncated, info = env.step(action)
             ep_return += reward
             done = terminated or truncated
-        successes += int(info.get("is_success", False)) #B
+        successes += int(info.get("success", False))    #B
         returns.append(ep_return)
     return successes / n_episodes, np.mean(returns)
 
@@ -156,8 +156,8 @@ success_rate, mean_return = run_random_agent(env)
 print(f"Random agent: success={success_rate:.0%} "
       f"return={mean_return:.2f}")                       #C
 ```
-- #A Sample uniformly from the 7-DOF continuous action space
-- #B The env reports success when the cube reaches the target zone
+- #A Sample uniformly from the 6-DOF continuous action space
+- #B Tally a success if the env's terminal info reports the cube landed in the target zone
 - #C Expect near-zero success — flailing the arm rarely grasps anything
 
 **Expected output:**
@@ -201,7 +201,7 @@ Random agent: success=0% return=-0.42
 | `target_pos` | (3,) | float32 | Target zone (x, y, z) |
 | `image_top` | (224, 224, 3) | uint8 | Top-down RGB camera |
 | `image_wrist` | (224, 224, 3) | uint8 | Wrist-mounted RGB camera |
-| Action | (7,) | float32 | Six joint position deltas + gripper command |
+| Action | (6,) | float32 | One position delta per SO-100 joint (gripper is joint 6) |
 
 **Exercise 2.1: Joint-space vs. end-effector-space control.** Call `make_env(control_mode="pd_ee_delta_pose")` instead of the default joint-space mode and re-run the random agent. The action space shape changes from `Box(7,)` to a Cartesian delta pose plus gripper. Do random rollouts succeed any more often? Why or why not? *Tip: end-effector control hides one form of difficulty (joint coordination) while exposing another (workspace boundaries).*
 
