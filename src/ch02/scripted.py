@@ -50,6 +50,13 @@ def scripted_policy(obs: dict, state: dict) -> np.ndarray:
     end-effector, cube, and target positions are addressable by name
     under ``obs['extra']``.
     """
+    if "extra" not in obs:
+        raise KeyError(
+            "scripted_policy expects obs_mode='state_dict' with an "
+            "'extra' key. Construct env with "
+            "make_env(obs_mode='state_dict', "
+            "control_mode='pd_ee_delta_pose')."
+        )
     phase = state["phase"]
     extra = obs["extra"]
     ee_pos = np.array(extra["tcp_pose"][:3])

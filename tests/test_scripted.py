@@ -90,3 +90,76 @@ def test_episode_success_helper():
 def test_run_scripted_agent_is_callable():
     """Sanity: run_scripted_agent exists and is exposed at module top."""
     assert callable(run_scripted_agent)
+
+
+def test_descend_advances_to_grasp_when_z_close():
+    cube = (0.2, 0.0, 0.02)
+    ee_at_grasp_height = (cube[0], cube[1], cube[2] + 0.005)
+    state = {"phase": "descend"}
+    scripted_policy(_obs(ee_xyz=ee_at_grasp_height, cube_xyz=cube), state)
+    assert state["phase"] == "grasp"
+
+
+def test_lift_advances_to_transport_at_lift_height():
+    cube = (0.2, 0.0, 0.02)
+    ee_at_lift = (cube[0], cube[1], cube[2] + 0.15)
+    state = {"phase": "lift"}
+    scripted_policy(_obs(ee_xyz=ee_at_lift, cube_xyz=cube), state)
+    assert state["phase"] == "transport"
+
+
+def test_transport_advances_to_place_when_xy_aligned():
+    target = (-0.2, 0.2, 0.02)
+    ee_above_target = (target[0], target[1], 0.17)
+    state = {"phase": "transport"}
+    scripted_policy(
+        _obs(ee_xyz=ee_above_target, target_xyz=target), state
+    )
+    assert state["phase"] == "place"
+
+
+def test_place_advances_to_release_when_z_close():
+    target = (-0.2, 0.2, 0.02)
+    ee_at_place = (target[0], target[1], target[2] + 0.02)
+    state = {"phase": "place"}
+    scripted_policy(
+        _obs(ee_xyz=ee_at_place, target_xyz=target), state
+    )
+    assert state["phase"] == "release"
+
+
+def test_release_is_terminal_and_opens_gripper():
+    state = {"phase": "release"}
+    action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
+    assert state["phase"] == "release"
+    assert action[-1] == -1.0
+    scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
+    assert state["phase"] == "release"
+
+
+def test_action_rpy_is_always_zero_across_phases():
+    """pd_ee_delta_pose: dims 3:6 are rpy; this controller never rotates."""
+    for phase in PHASES:
+        state = {"phase": phase}
+        action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
+        assert np.allclose(action[3:6], 0.0), (
+            f"phase {phase} produced nonzero rpy: {action[3:6]}"
+        )
+
+
+def test_action_xyz_clipped_to_unit_range():
+    """ee far from goal → clip should fire."""
+    state = {"phase": "approach"}
+    action = scripted_policy(
+        _obs(ee_xyz=(-1.0, -1.0, 1.0), cube_xyz=(1.0, 1.0, 0.02)),
+        state,
+    )
+    assert np.all(np.abs(action[:3]) <= 1.0 + 1e-6)
+
+
+def test_missing_extra_key_raises_clear_error():
+    """Reader who forgets obs_mode='state_dict' should see a useful msg."""
+    import pytest
+    state = {"phase": "approach"}
+    with pytest.raises(KeyError, match="state_dict"):
+        scripted_policy({"agent": {"qpos": np.zeros(6)}}, state)
