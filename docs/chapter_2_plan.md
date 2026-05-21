@@ -245,16 +245,17 @@ Listing 2.3 defines the seven-phase scripted controller as a single `scripted_po
 import numpy as np
 
 PHASES = ["approach", "descend", "grasp",
-          "lift", "transport", "place", "release"]      #A
+          "lift", "transport", "place", "release"] #A
 
 def scripted_policy(obs, state):
-    """A simple state-machine controller for pick-and-place."""
+    """7-phase controller for PickCubeSO100-v1."""
     phase = state["phase"]
-    ee_pos = obs["arm_qpos"][-3:]                       #B
-    cube = obs["cube_pos"]
-    target = obs["target_pos"]
+    extra = obs["extra"]
+    ee_pos = np.array(extra["tcp_pose"][:3])    #B
+    cube = np.array(extra["obj_pose"][:3])
+    target = np.array(extra["goal_pos"])
 
-    if phase == "approach":                              #C
+    if phase == "approach":                     #C
         goal = cube + np.array([0.0, 0.0, 0.10])
         gripper = -1.0
         if np.linalg.norm(ee_pos - goal) < 0.01:
@@ -264,7 +265,7 @@ def scripted_policy(obs, state):
         gripper = -1.0
         if abs(ee_pos[2] - goal[2]) < 0.005:
             state["phase"] = "grasp"
-    elif phase == "grasp":                               #D
+    elif phase == "grasp":                      #D
         goal = ee_pos
         gripper = 1.0
         state["grasp_steps"] = state.get("grasp_steps", 0) + 1
@@ -287,43 +288,48 @@ def scripted_policy(obs, state):
             state["phase"] = "release"
     else:  # release
         goal = ee_pos
-        gripper = -1.0                                   #E
+        gripper = -1.0                          #E
 
-    direction = goal - ee_pos
-    joint_delta = np.clip(direction * 5.0, -1.0, 1.0)   #F
-    return np.concatenate([joint_delta,
+    ee_delta = np.clip((goal - ee_pos) * 5.0, -1.0, 1.0)
+    return np.concatenate([ee_delta,            #F
                            np.zeros(3),
                            [gripper]]).astype(np.float32)
 ```
 - #A Seven phases of the state machine, in execution order
-- #B End-effector position is the last three components of `arm_qpos` in this env's convention
+- #B ManiSkill `state_dict` observations expose the end-effector under `extra.tcp_pose`, the cube under `extra.obj_pose`, and the target under `extra.goal_pos`
 - #C Approach: hover 10 cm above the cube with the gripper open
 - #D Grasp: hold position and close the gripper for several frames to ensure contact
 - #E Release the cube at the target
-- #F Convert the desired Cartesian motion into a joint-space action, clipped to the env's range
+- #F Pack the Cartesian ee delta with a zero rpy delta and the gripper command — `pd_ee_delta_pose` actions are 7-dim
 
 The `run_scripted_agent` function in listing 2.4 mirrors the random-agent loop but threads the per-episode state dictionary through `scripted_policy`. Reported success rates climb above zero but settle well below what teleoperators achieve, motivating the data-driven approach.
 
 **Listing 2.4: Evaluating the scripted policy**
 ```python
+scripted_env = make_env(                        #A
+    obs_mode="state_dict",
+    control_mode="pd_ee_delta_pose",
+)
+
 def run_scripted_agent(env, n_episodes=10):
     successes = 0
     for ep in range(n_episodes):
         obs, info = env.reset(seed=ep)
-        state = {"phase": "approach"}                    #A
+        state = {"phase": "approach"}           #B
         done = False
         while not done:
             action = scripted_policy(obs, state)
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
-        successes += int(info.get("is_success", False))
+        successes += int(info.get("success", False))
     return successes / n_episodes
 
-rate = run_scripted_agent(env)
-print(f"Scripted agent success rate: {rate:.0%}")       #B
+rate = run_scripted_agent(scripted_env)
+print(f"Scripted agent success rate: {rate:.0%}")  #C
 ```
-- #A The state machine carries its phase across steps via this dict
-- #B Expect a moderate success rate — better than random, far from expert
+- #A The scripted policy reads positions by name and emits Cartesian deltas, so we construct a `state_dict` env with `pd_ee_delta_pose` control — different modes from listing 2.1's random-agent env
+- #B The state machine carries its phase across steps via this dict
+- #C Expect a moderate success rate — better than random, far from expert
 
 **Expected output:**
 ```
