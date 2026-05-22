@@ -432,7 +432,7 @@ Episode 0 length: 238 steps
 
 ### 2.4.1 Rendering Expert Episodes
 - Extract keyframes from one expert episode at regular intervals.
-- Display top-down and wrist-camera views side by side as a two-row filmstrip — the reader sees what the cube looked like at each phase of a successful grasp-transport-release.
+- Display `up` and `side` camera views side by side as a two-row filmstrip — the reader sees what the cube looked like at each phase of a successful grasp-transport-release.
 - Annotate with the action taken at each keyframe.
 
 ### 2.4.2 Action Distributions: Three-Way Per-Joint Comparison
@@ -446,89 +446,84 @@ Episode 0 length: 238 steps
 - Episodes overlap in shape (all start, lift, transport, place) but differ in timing and amplitude depending on initial cube pose.
 - This visually confirms that a successful policy must be conditional on the observation, not a single memorized trajectory.
 
-Listing 2.7 implements `render_keyframes` as a utility in `ch02.viz`. Import it as `from ch02.viz import render_keyframes` and call it on the dataset; the source is shown here for transparency about how the helper tiles the two camera views.
+Listing 2.7 implements `render_keyframes` as a provided utility in `ch02.viz`. Import and call it as below; the source is shown for transparency about how the helper tiles the two camera views.
 
 **Listing 2.7: Rendering expert keyframes from both camera views**
 ```python
 import matplotlib.pyplot as plt
+import numpy as np
+from ch02.dataset import episode_frames
 
-def render_keyframes(dataset, episode_idx=0, n_frames=6):
-    """Display top and wrist camera keyframes from one episode."""
-    ep = [dataset[i] for i in range(len(dataset))
-          if dataset[i]["episode_index"] == episode_idx]
+def render_keyframes(
+        dataset, episode_idx=0, n_frames=6, save_path=None):
+    """2-row filmstrip of up/side keyframes from one episode."""
+    ep = episode_frames(dataset, episode_idx)        #A
     idxs = np.linspace(0, len(ep) - 1,
-                       n_frames, dtype=int)              #A
+                       n_frames, dtype=int)
 
-    fig, axes = plt.subplots(2, n_frames, figsize=(18, 6))
+    fig, axes = plt.subplots(
+        2, n_frames, figsize=(3 * n_frames, 6))
     for col, i in enumerate(idxs):
-        top = ep[i]["observation.images.top"]
-        wrist = ep[i]["observation.images.wrist"]
-        axes[0, col].imshow(top.permute(1, 2, 0).numpy())  #B
-        axes[0, col].set_title(f"step {i}")
-        axes[1, col].imshow(wrist.permute(1, 2, 0).numpy())
+        up = ep[i]["observation.images.up"]          #B
+        side = ep[i]["observation.images.side"]
+        axes[0, col].imshow(up.permute(1, 2, 0).numpy())
+        axes[0, col].set_title(f"step {i}", fontsize=10)
+        axes[1, col].imshow(side.permute(1, 2, 0).numpy())
         for r in (0, 1):
             axes[r, col].axis("off")
-    axes[0, 0].set_ylabel("top view")
-    axes[1, 0].set_ylabel("wrist view")
+    axes[0, 0].set_ylabel("up view", fontsize=10)
+    axes[1, 0].set_ylabel("side view", fontsize=10)
     plt.tight_layout()
-    plt.savefig("figures/figure_2_4_expert_keyframes.png",
-                dpi=300)                                  #C
+    if save_path is not None:                        #C
+        fig.savefig(save_path, dpi=300,
+                    bbox_inches="tight")
+    return fig
 ```
-- #A Sample `n_frames` evenly spaced indices across the episode
-- #B LeRobot stores images as (C, H, W) — permute for matplotlib
-- #C Save at print resolution (300 DPI) per the figure style guide
+- #A Reuse `episode_frames` from `ch02.dataset` instead of re-deriving the filter inline; same primitive Listing 2.6 uses
+- #B Read the `up` and `side` camera streams (LeRobot 0.5.x returns them as float32 in `[0, 1]` — matplotlib accepts that directly)
+- #C `save_path=None` makes the function return-only by default; tests and notebook cells pass the canonical path when persistence is wanted
 
-Listing 2.8 lives in `ch02.viz` alongside `render_keyframes`. It collects actions from all three policies and overlays per-dimension histograms in figure 2.5. Import it as `from ch02.viz import plot_action_distributions` — the structural gap between the scripted and expert distributions is the gap a learned policy has to close.
+Listing 2.8 collects actions from three sources — the dataset's expert teleoperation, the scripted motion-planner policy from §2.2, and uniform random sampling — and overlays per-dimension histograms. The three collectors live in `ch02.viz`; the comparison code is what the reader runs.
 
 **Listing 2.8: Per-joint action distributions — expert vs. scripted vs. random**
 ```python
-def collect_actions(env, policy_fn, n_episodes=10):
-    """Run a policy and collect all actions taken."""
-    actions = []
-    for ep in range(n_episodes):
-        obs, _ = env.reset(seed=ep + 100)
-        state = {"phase": "approach"} if policy_fn else None
-        done = False
-        while not done:
-            if policy_fn is None:
-                action = env.action_space.sample()       #A
-            else:
-                action = policy_fn(obs, state)
-            actions.append(action.copy())
-            obs, _, terminated, truncated, _ = env.step(action)
-            done = terminated or truncated
-    return np.array(actions)
+import matplotlib.pyplot as plt
+from ch02.viz import (
+    JOINT_NAMES,
+    collect_actions,
+    collect_expert_actions,
+    collect_scripted_actions,
+)
 
-expert = np.stack([dataset[i]["action"].numpy()         #B
-                   for i in range(len(dataset))])
-scripted = collect_actions(env, scripted_policy)
-random_ = collect_actions(env, None)
+expert = collect_expert_actions(dataset)             #A
+random_ = collect_actions(env, None, n_episodes=3)
+scripted = collect_scripted_actions(env, n_episodes=3)
 
-fig, axes = plt.subplots(2, 4, figsize=(16, 6))
-joint_names = [f"joint_{i}" for i in range(6)] + ["gripper"]
-for j, name in enumerate(joint_names):
+fig, axes = plt.subplots(2, 3, figsize=(15, 6))
+for j, name in enumerate(JOINT_NAMES):
     ax = axes.flat[j]
-    for arr, label in [(expert, "expert"),
-                        (scripted, "scripted"),
-                        (random_, "random")]:
-        ax.hist(arr[:, j], bins=40, alpha=0.4,
-                label=label, density=True)               #C
-    ax.set_title(name)
+    for arr, label in [(expert, "expert"),           #B
+                       (scripted, "scripted"),
+                       (random_, "random")]:
+        ax.hist(arr[:, j], bins=40, alpha=0.5,
+                label=label, density=True)
+    ax.set_title(name, fontsize=10)
     ax.legend(fontsize=8)
 plt.tight_layout()
-plt.savefig("figures/figure_2_5_action_distributions.png",
-            dpi=300)
+fig.savefig(                                         #C
+    "figures/figure_2_5_action_distributions.png",
+    dpi=300, bbox_inches="tight")
 ```
-- #A `None` indicates the random policy
-- #B Stack all expert actions from the dataset into a single array
-- #C Overlapping histograms reveal the distributional gap per joint
+- #A `collect_expert_actions` stacks every dataset frame's `action`; `collect_actions(env, None, ...)` samples uniformly from `env.action_space`; `collect_scripted_actions` wraps `env.step` to capture the joint commands the motion planner issues
+- #B Six SO-101 joints in a 2×3 grid (gripper is joint 6); overlapping histograms reveal the distributional gap per joint
+- #C Save at print resolution (300 DPI) per the figure style guide
 
 **Figure 2.4: Expert Pick-and-Place Keyframes**
-- A 2x6 grid: top row is the top-down camera, bottom row is the wrist-mounted camera, columns are six keyframes from one expert episode spanning approach → grasp → lift → transport → place → release.
-- Caption: "Keyframes from one expert episode. The top-down view shows the macroscopic motion of the arm; the wrist view shows the contact-level detail of the grasp. A learned policy must capture both perspectives to handle objects whose position is only partially visible from above."
+- A 2x6 grid: top row is the `up` camera, bottom row is the `side` camera, columns are six keyframes from one expert episode spanning approach → grasp → lift → transport → place → release.
+- Caption: "Keyframes from one expert episode. The `up` view shows the workspace from above; the `side` view shows the gripper-to-cube contact geometry. A learned policy must capture both perspectives to handle objects whose position is only partially visible from above."
 
 **Figure 2.5: Per-Joint Action Distributions — Expert vs. Scripted vs. Random**
-- Seven overlapping histograms, one per action dimension, comparing the three policies.
+- Six overlapping histograms in a 2x3 grid, one per SO-101 joint, comparing the three policies.
 - Caption: "Action distributions for each of the six action dimensions. Expert actions show structured, multi-modal clusters that reflect different grasp strategies. The scripted policy produces a simpler, lower-variance pattern. Random actions are uniform across the range. The gap between the scripted and expert histograms is what a learned policy must close."
 
 **Figure 2.6: Expert Joint Trajectories**
