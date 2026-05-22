@@ -15,7 +15,17 @@ This chapter ships **two ways to work through the material**:
 1. **`notebooks/ch02.ipynb` — the canonical path.** Maps cell-by-cell to the book's prose. Version-pinned and kept green; this is what we promise will work end-to-end.
 2. **`agents/chapter-02-guide.md` — the experimental companion.** A Claude Code subagent that walks the reader through the same listings in dialogue. Scope is strictly Chapter 2 — it will not skate into later-chapter material. Optional and unsupported beyond best-effort.
 
+**To use the companion agent**, symlink it into Claude Code's per-project agent directory so the subagent is auto-discovered, then start Claude Code from this repo root:
+
+```bash
+mkdir -p .claude/agents
+ln -s ../../agents/chapter-02-guide.md .claude/agents/chapter-02-guide.md
+# Then start Claude Code; "chapter-02-guide" appears as an invocable subagent.
+```
+
 Tests in `tests/` are author/CI infrastructure. Readers may run them as an install smoke check; engagement is not expected.
+
+`scripts/check_*.py` are reader-friendly smoke scripts for each section's package code (env, scripted policy, dataset, viz helpers, pipeline). Run any of them from the repo root after install to verify a section works end-to-end.
 
 ## Layout
 
