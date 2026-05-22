@@ -311,15 +311,15 @@ Scripted agent success rate: 50%
 **Content:**
 
 ### 2.3.1 Loading from the Hub
-- Use `lerobot.common.datasets.lerobot_dataset.LeRobotDataset` to load an SO-100 pick-and-place dataset.
-- The dataset is hosted on Hugging Face Hub — a single line downloads the parquet shards and image archives.
+- Use `lerobot.datasets.LeRobotDataset` to load the SO-101 pick-and-place expert dataset.
+- The dataset is hosted on Hugging Face Hub — a single line downloads the parquet shards and video archives.
 - Inspect dataset length, number of episodes, and feature names.
-- **Implementor note:** the exact dataset ID is pinned at implementation time from the available SO-100 pick-and-place datasets on the LeRobot Hub. The plan uses `lerobot/so100_pick_place` as a placeholder.
+- The chapter pins to `lerobot/svla_so101_pickplace`: 50 episodes of real-hardware teleoperated pick-and-place at 30 fps, 11,939 frames, two USB-camera streams (`up` and `side`).
 
 ### 2.3.2 The Feature Schema
-- Each sample is a dictionary with keys including `observation.state`, `observation.images.top`, `observation.images.wrist`, `action`, `episode_index`, `frame_index`, `timestamp`.
-- `observation.state` is the 6-DOF joint state plus gripper. `action` is the recorded 7-DOF teleoperation command.
-- Images come in two views (top-down third-person and wrist-mounted), matching the simulation observation structure.
+- Each sample is a dictionary with keys including `observation.state`, `observation.images.up`, `observation.images.side`, `action`, `episode_index`, `frame_index`, `timestamp`.
+- `observation.state` is the 6-DOF SO-101 joint state (gripper is joint 6). `action` is the recorded 6-DOF teleoperation command — same shape, same convention.
+- Images come from two USB cameras: `up` (looking down at the workspace) and `side` (across the workspace).
 - `episode_index` groups frames into episodes; `frame_index` orders them within each episode.
 
 ### 2.3.3 Understanding delta_timestamps
@@ -332,45 +332,45 @@ Scripted agent success rate: 50%
 - Show how episodes begin (reset state) and end (success or timeout).
 - Count steps per episode — episodes have variable length depending on how quickly the teleoperator completed the task.
 
-Listing 2.5 instantiates the `LeRobotDataset` for the SO-100 pick-and-place dataset and prints its overall size and feature schema. The dataset ID is a placeholder — at implementation time, pin to a specific dataset from the LeRobot Hub.
+Listing 2.5 instantiates the `LeRobotDataset` for the SO-101 pick-and-place expert dataset and prints its overall size and feature schema. The download is one-time; subsequent calls hit the local Hugging Face cache.
 
 **Listing 2.5: Loading the SO-101 pick-and-place expert dataset**
 ```python
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 dataset = LeRobotDataset(
-    "lerobot/so100_pick_place",                         #A
+    "lerobot/svla_so101_pickplace",                  #A
 )
-print(f"Total frames: {len(dataset)}")                  #B
+print(f"Total frames: {len(dataset)}")               #B
 print(f"Episodes: {dataset.num_episodes}")
-print(f"Features: {list(dataset.features.keys())}")     #C
+print(f"Features: {list(dataset.features.keys())}") #C
 ```
-- #A Placeholder dataset ID — verify and replace with the chosen SO-100 pick-and-place dataset at implementation time
+- #A 50 episodes of teleoperated SO-101 pick-and-place collected on real hardware — the chapter's canonical expert dataset
 - #B Total number of (observation, action) frames across all episodes
 - #C Feature names include the state vector, two camera streams, the action, and episode/frame metadata
 
 **Expected output:**
 ```
-Total frames: 18421
+Total frames: 11939
 Episodes: 50
-Features: ['observation.state', 'observation.images.top',
-           'observation.images.wrist', 'action', 'episode_index',
-           'frame_index', 'timestamp', 'next.done']
+Features: ['observation.state', 'observation.images.up',
+           'observation.images.side', 'action', 'episode_index',
+           'frame_index', 'timestamp']
 ```
-*Frame and episode counts depend on which dataset is pinned. The feature list shape is what matters: a state vector, two image streams, an action, and trajectory metadata.*
+*Counts and feature names match the v3.0 codebase version of `svla_so101_pickplace`. If the dataset is republished under a different revision, both may shift.*
 
 Listing 2.6 indexes into the dataset to inspect a single frame's shape and dtype, then collects every frame belonging to episode zero to confirm episode-length variation. This concretizes the abstract feature schema for the reader.
 
 **Listing 2.6: Inspecting a single frame and one episode**
 ```python
-frame = dataset[0]                                      #A
+frame = dataset[0]                                   #A
 for key, val in frame.items():
     if hasattr(val, "shape"):
         print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     else:
         print(f"  {key}: {val}")
 
-ep_indices = [i for i in range(len(dataset))            #B
+ep_indices = [i for i in range(len(dataset))         #B
               if dataset[i]["episode_index"] == 0]
 print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 ```
@@ -379,33 +379,33 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 
 **Expected output:**
 ```
-  observation.state: shape=torch.Size([7]), dtype=torch.float32
-  observation.images.top: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
-  observation.images.wrist: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
-  action: shape=torch.Size([7]), dtype=torch.float32
+  observation.state: shape=torch.Size([6]), dtype=torch.float32
+  observation.images.up: shape=torch.Size([3, 480, 640]), dtype=torch.uint8
+  observation.images.side: shape=torch.Size([3, 480, 640]), dtype=torch.uint8
+  action: shape=torch.Size([6]), dtype=torch.float32
   episode_index: 0
   frame_index: 0
   timestamp: 0.0
 
-Episode 0 length: 348 steps
+Episode 0 length: 238 steps
 ```
-*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Episode lengths vary from ~200 to ~500 frames.*
+*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Episode lengths vary across the 50 trajectories — the teleoperator's pace differed run to run.*
 
 **Table 2.2: LeRobot SO-101 Pick-and-Place Dataset Features**
 
 | Feature | Shape | Type | Description |
 |---------|-------|------|-------------|
-| `observation.state` | (7,) | float32 | Six joint positions + gripper state |
-| `observation.images.top` | (3, 224, 224) | uint8 | Top-down third-person camera |
-| `observation.images.wrist` | (3, 224, 224) | uint8 | Wrist-mounted camera |
-| `action` | (7,) | float32 | Recorded teleoperation command |
+| `observation.state` | (6,) | float32 | Six SO-101 joint positions (gripper is joint 6) |
+| `observation.images.up` | (3, 480, 640) | uint8 | Up-mounted camera (looking down at workspace) |
+| `observation.images.side` | (3, 480, 640) | uint8 | Side-mounted camera (across workspace) |
+| `action` | (6,) | float32 | Recorded teleoperation joint command |
 | `episode_index` | scalar | int64 | Episode this frame belongs to |
 | `frame_index` | scalar | int64 | Position within the episode |
 | `timestamp` | scalar | float32 | Seconds from episode start |
 
 **Callout Box: "WHAT IS delta_timestamps?"**
 - LeRobot's mechanism for requesting data at relative time offsets from a given frame.
-- Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 7)`.
+- Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 6)`.
 - This enables **action chunking** — predicting a short sequence of future actions instead of one at a time.
 - Action chunking improves policy smoothness and is the foundation for the ACT and diffusion-policy heads in Chapters 4 and 5.
 
@@ -430,7 +430,7 @@ Episode 0 length: 348 steps
 
 ### 2.4.2 Action Distributions: Three-Way Per-Joint Comparison
 - Collect actions from the expert dataset, the scripted policy, and a random agent.
-- For each of the seven action dimensions (six joints + gripper), plot a histogram with the three sources overlaid.
+- For each of the six action dimensions (five SO-101 arm joints + gripper as joint 6), plot a histogram with the three sources overlaid.
 - Expert distributions show structured, multi-modal patterns — different approach directions produce different joint trajectories. Scripted actions cluster around a few values. Random actions are uniform.
 - The gap between scripted and expert histograms is what behavior cloning has to close.
 
@@ -522,7 +522,7 @@ plt.savefig("figures/figure_2_5_action_distributions.png",
 
 **Figure 2.5: Per-Joint Action Distributions — Expert vs. Scripted vs. Random**
 - Seven overlapping histograms, one per action dimension, comparing the three policies.
-- Caption: "Action distributions for each of the seven action dimensions. Expert actions show structured, multi-modal clusters that reflect different grasp strategies. The scripted policy produces a simpler, lower-variance pattern. Random actions are uniform across the range. The gap between the scripted and expert histograms is what a learned policy must close."
+- Caption: "Action distributions for each of the six action dimensions. Expert actions show structured, multi-modal clusters that reflect different grasp strategies. The scripted policy produces a simpler, lower-variance pattern. Random actions are uniform across the range. The gap between the scripted and expert histograms is what a learned policy must close."
 
 **Figure 2.6: Expert Joint Trajectories**
 - Six small line plots, one per arm joint, showing joint angle over time for five overlaid expert episodes.
