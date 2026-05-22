@@ -1,33 +1,50 @@
 """Unit tests for the scripted-policy state machine.
 
-These tests construct synthetic ManiSkill-style observations and
-verify the phase transitions fire under the right geometric
-conditions. No env needed; ch02.scripted has no ManiSkill imports.
+Tests use a MockPlanner — no env needed, no SAPIEN simulation.
+``sapien.Pose`` is required for synthetic pose construction; if
+sapien isn't installed, the whole module is skipped.
 """
 
 import numpy as np
+import pytest
 
-from ch02.scripted import (
+pytest.importorskip("sapien")
+
+import sapien  # noqa: E402
+
+from ch02.scripted import (  # noqa: E402
     PHASES,
     _episode_success,
     run_scripted_agent,
-    scripted_policy,
+    run_scripted_episode,
 )
 
 
-def _obs(ee_xyz, cube_xyz=(0.2, 0.0, 0.02), target_xyz=(-0.2, 0.2, 0.02)):
-    """Build a state_dict-shaped obs with the three positions we read."""
-    return {
-        "extra": {
-            "tcp_pose": np.array(
-                [*ee_xyz, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
-            ),
-            "obj_pose": np.array(
-                [*cube_xyz, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
-            ),
-            "goal_pos": np.array(target_xyz, dtype=np.float32),
-        }
-    }
+class MockPlanner:
+    """Records ManiSkill motion-planner calls for assertion."""
+
+    def __init__(self):
+        self.calls: list[tuple] = []
+
+    def move_to_pose_with_screw(self, pose):
+        self.calls.append(("move_to_pose_with_screw", pose))
+        return "success"
+
+    def close_gripper(self, gripper_state=None):
+        self.calls.append(("close_gripper", gripper_state))
+
+    def open_gripper(self):
+        self.calls.append(("open_gripper",))
+
+    def close(self):
+        self.calls.append(("close",))
+
+
+def _grasp_and_goal():
+    """Synthetic grasp pose and goal position for tests."""
+    grasp_pose = sapien.Pose([0.2, 0.0, 0.05])
+    goal_pos = np.array([-0.2, 0.2, 0.02])
+    return grasp_pose, goal_pos
 
 
 def test_phases_in_execution_order():
@@ -42,42 +59,9 @@ def test_phases_in_execution_order():
     ]
 
 
-def test_action_shape_and_dtype():
-    state = {"phase": "approach"}
-    action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
-    assert action.shape == (7,)
-    assert action.dtype == np.float32
-
-
-def test_approach_advances_to_descend_when_at_hover_height():
-    """Approach goal is cube + 10cm Z; reach it and we should advance."""
-    cube = (0.2, 0.0, 0.02)
-    hover_goal = (cube[0], cube[1], cube[2] + 0.10)
-    state = {"phase": "approach"}
-    scripted_policy(_obs(ee_xyz=hover_goal, cube_xyz=cube), state)
-    assert state["phase"] == "descend"
-
-
-def test_grasp_advances_after_five_steps():
-    """Grasp phase counts frames and advances at 5."""
-    state = {"phase": "grasp"}
-    for _ in range(4):
-        scripted_policy(_obs(ee_xyz=(0.2, 0.0, 0.02)), state)
-        assert state["phase"] == "grasp"
-    scripted_policy(_obs(ee_xyz=(0.2, 0.0, 0.02)), state)
-    assert state["phase"] == "lift"
-
-
-def test_grasp_gripper_command_is_closed():
-    state = {"phase": "grasp"}
-    action = scripted_policy(_obs(ee_xyz=(0.2, 0.0, 0.02)), state)
-    assert action[-1] == 1.0  # gripper closed
-
-
-def test_approach_gripper_command_is_open():
-    state = {"phase": "approach"}
-    action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
-    assert action[-1] == -1.0  # gripper open
+def test_phases_length_is_seven():
+    """One-line sanity guard against careless edits to PHASES."""
+    assert len(PHASES) == 7
 
 
 def test_episode_success_helper():
@@ -87,79 +71,99 @@ def test_episode_success_helper():
     assert _episode_success({}) is False
 
 
+def test_episode_call_sequence():
+    """The 8 planner calls fire in the documented order."""
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+
+    expected = [
+        "move_to_pose_with_screw",  # 1 approach
+        "move_to_pose_with_screw",  # 2 descend
+        "move_to_pose_with_screw",  # 3 grasp pose
+        "close_gripper",            # close
+        "move_to_pose_with_screw",  # 4 lift
+        "move_to_pose_with_screw",  # 5 transport
+        "move_to_pose_with_screw",  # 6 place
+        "open_gripper",             # 7 release
+    ]
+    assert [c[0] for c in planner.calls] == expected
+
+
+def test_episode_uses_six_move_calls():
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    moves = [c for c in planner.calls if c[0] == "move_to_pose_with_screw"]
+    assert len(moves) == 6
+
+
+def test_close_gripper_uses_partial_state():
+    """Partial close (-0.8) applies contact pressure without overclosing."""
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    close_calls = [c for c in planner.calls if c[0] == "close_gripper"]
+    assert len(close_calls) == 1
+    assert close_calls[0][1] == -0.8
+
+
+def test_open_gripper_called_exactly_once():
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    open_calls = [c for c in planner.calls if c[0] == "open_gripper"]
+    assert len(open_calls) == 1
+
+
+def test_close_fires_after_third_move():
+    """Grasp = approach + descend + grasp-pose then close."""
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    assert planner.calls[3][0] == "close_gripper"
+
+
+def test_open_fires_last():
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    assert planner.calls[-1][0] == "open_gripper"
+
+
 def test_run_scripted_agent_is_callable():
-    """Sanity: run_scripted_agent exists and is exposed at module top."""
+    """Smoke: importable + callable; full eval is integration."""
     assert callable(run_scripted_agent)
 
 
-def test_descend_advances_to_grasp_when_z_close():
-    cube = (0.2, 0.0, 0.02)
-    ee_at_grasp_height = (cube[0], cube[1], cube[2] + 0.005)
-    state = {"phase": "descend"}
-    scripted_policy(_obs(ee_xyz=ee_at_grasp_height, cube_xyz=cube), state)
-    assert state["phase"] == "grasp"
+def test_move_z_offsets_match_phase_intent():
+    """6 move calls hit the documented Z offsets in order."""
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    moves = [
+        c[1] for c in planner.calls
+        if c[0] == "move_to_pose_with_screw"
+    ]
+    # moves 1-4 are grasp-relative (Z offset above grasp_pose.z)
+    grasp_z = grasp_pose.p[2]
+    assert moves[0].p[2] == pytest.approx(grasp_z + 0.10)
+    assert moves[1].p[2] == pytest.approx(grasp_z + 0.03)
+    assert moves[2].p[2] == pytest.approx(grasp_z + 0.01)
+    assert moves[3].p[2] == pytest.approx(grasp_z + 0.15)
+    # moves 5-6 are goal-relative
+    assert moves[4].p[2] == pytest.approx(goal_pos[2] + 0.15)
+    assert moves[5].p[2] == pytest.approx(goal_pos[2] + 0.02)
 
 
-def test_lift_advances_to_transport_at_lift_height():
-    cube = (0.2, 0.0, 0.02)
-    ee_at_lift = (cube[0], cube[1], cube[2] + 0.15)
-    state = {"phase": "lift"}
-    scripted_policy(_obs(ee_xyz=ee_at_lift, cube_xyz=cube), state)
-    assert state["phase"] == "transport"
-
-
-def test_transport_advances_to_place_when_xy_aligned():
-    target = (-0.2, 0.2, 0.02)
-    ee_above_target = (target[0], target[1], 0.17)
-    state = {"phase": "transport"}
-    scripted_policy(
-        _obs(ee_xyz=ee_above_target, target_xyz=target), state
-    )
-    assert state["phase"] == "place"
-
-
-def test_place_advances_to_release_when_z_close():
-    target = (-0.2, 0.2, 0.02)
-    ee_at_place = (target[0], target[1], target[2] + 0.02)
-    state = {"phase": "place"}
-    scripted_policy(
-        _obs(ee_xyz=ee_at_place, target_xyz=target), state
-    )
-    assert state["phase"] == "release"
-
-
-def test_release_is_terminal_and_opens_gripper():
-    state = {"phase": "release"}
-    action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
-    assert state["phase"] == "release"
-    assert action[-1] == -1.0
-    scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
-    assert state["phase"] == "release"
-
-
-def test_action_rpy_is_always_zero_across_phases():
-    """pd_ee_delta_pose: dims 3:6 are rpy; this controller never rotates."""
-    for phase in PHASES:
-        state = {"phase": phase}
-        action = scripted_policy(_obs(ee_xyz=(0.0, 0.0, 0.3)), state)
-        assert np.allclose(action[3:6], 0.0), (
-            f"phase {phase} produced nonzero rpy: {action[3:6]}"
-        )
-
-
-def test_action_xyz_clipped_to_unit_range():
-    """ee far from goal → clip should fire."""
-    state = {"phase": "approach"}
-    action = scripted_policy(
-        _obs(ee_xyz=(-1.0, -1.0, 1.0), cube_xyz=(1.0, 1.0, 0.02)),
-        state,
-    )
-    assert np.all(np.abs(action[:3]) <= 1.0 + 1e-6)
-
-
-def test_missing_extra_key_raises_clear_error():
-    """Reader who forgets obs_mode='state_dict' should see a useful msg."""
-    import pytest
-    state = {"phase": "approach"}
-    with pytest.raises(KeyError, match="state_dict"):
-        scripted_policy({"agent": {"qpos": np.zeros(6)}}, state)
+def test_quaternion_preserved_across_goal_moves():
+    """Transport + place reuse grasp orientation so the cube stays put."""
+    planner = MockPlanner()
+    grasp_pose, goal_pos = _grasp_and_goal()
+    run_scripted_episode(planner, grasp_pose, goal_pos)
+    moves = [
+        c[1] for c in planner.calls
+        if c[0] == "move_to_pose_with_screw"
+    ]
+    assert np.allclose(moves[4].q, grasp_pose.q)
+    assert np.allclose(moves[5].q, grasp_pose.q)
