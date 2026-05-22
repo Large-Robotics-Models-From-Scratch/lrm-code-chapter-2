@@ -557,7 +557,7 @@ fig.savefig(                                         #D
 - Iterate through the dataset and compute per-feature mean, std, min, max for `observation.state` and `action`.
 - Implement `normalize(x, stats, key)` and `denormalize(x, stats, key)` functions.
 - Verify round-trip: `denormalize(normalize(x)) ≈ x` to floating-point precision.
-- Images are not z-scored — they are divided by 255 to land in `[0, 1]` and handed to the vision encoder.
+- Images are not z-scored. LeRobot 0.5.x already returns them as `float32` in `[0, 1]`, so the collate function passes them through. The legacy `uint8` path is kept for callers who feed in an older dataset version.
 
 ### 2.5.3 LeRobot's meta/stats.json
 - Reveal that LeRobot ships precomputed statistics in each dataset's `meta/stats.json`.
@@ -566,7 +566,7 @@ fig.savefig(                                         #D
 
 ### 2.5.4 The DataLoader Wrapper
 - Wrap the LeRobotDataset in a PyTorch DataLoader with batching and shuffling.
-- Apply normalization in a collate function: z-score state and action, scale images to `[0, 1]`.
+- Apply normalization in a collate function: z-score state and action; images pass through (already `float32` in `[0, 1]` from LeRobot 0.5.x); the `task` strings stay as a list; everything else gets `torch.tensor`-stacked.
 - Export `make_pickplace_dataloader(dataset_id, batch_size, shuffle)` — the API Chapter 3 imports.
 
 ### 2.5.5 Verifying the Pipeline
@@ -585,7 +585,7 @@ def compute_stats(dataset):
     states, actions = [], []
     for i in range(len(dataset)):
         frame = dataset[i]
-        states.append(frame["observation.state"])         #A
+        states.append(frame["observation.state"])  #A
         actions.append(frame["action"])
     states = torch.stack(states)
     actions = torch.stack(actions)
@@ -607,9 +607,12 @@ Listing 2.10 defines the `normalize` and `denormalize` functions used everywhere
 
 **Listing 2.10: Normalize and denormalize functions**
 ```python
+import torch
+
 def normalize(x, stats, key):
     """Z-score normalization: (x - mean) / std."""
-    return (x - stats[key]["mean"]) / (stats[key]["std"] + 1e-8)  #A
+    return (x - stats[key]["mean"]) / (
+        stats[key]["std"] + 1e-8)            #A
 
 def denormalize(x, stats, key):
     """Inverse z-score normalization."""
@@ -618,7 +621,7 @@ def denormalize(x, stats, key):
 sample = dataset[0]["observation.state"]
 normed = normalize(sample, stats, "observation.state")
 recovered = denormalize(normed, stats, "observation.state")
-assert torch.allclose(sample, recovered, atol=1e-5)       #B
+assert torch.allclose(sample, recovered, atol=1e-5)  #B
 ```
 - #A The small epsilon prevents division by zero for features that are constant across the dataset
 - #B Verify the round-trip is lossless to floating-point precision
@@ -627,55 +630,69 @@ Listing 2.11 ties the dataset, the statistics, and the normalization functions i
 
 **Listing 2.11: Building the DataLoader — the Chapter 3 API contract**
 ```python
+import torch
 from torch.utils.data import DataLoader
+from ch02.dataset import DEFAULT_DATASET_ID, load_dataset
+from ch02.pipeline import compute_stats, normalize
 
 def make_pickplace_dataloader(
-    dataset_id="lerobot/so100_pick_place",                #A
+    dataset_id=DEFAULT_DATASET_ID,            #A
     batch_size=64,
     shuffle=True,
 ):
-    """Return a normalized DataLoader and stats for the SO-101 task."""
-    dataset = LeRobotDataset(dataset_id)
+    """Return a normalized DataLoader and stats."""
+    dataset = load_dataset(dataset_id)
     stats = compute_stats(dataset)
 
     def collate_fn(batch):
         out = {}
         for key in batch[0].keys():
             vals = [b[key] for b in batch]
-            if not isinstance(vals[0], torch.Tensor):
+            first = vals[0]
+            if isinstance(first, str):        #B
+                out[key] = vals
+                continue
+            if not isinstance(first, torch.Tensor):
                 out[key] = torch.tensor(vals)
                 continue
             stacked = torch.stack(vals)
-            if key in stats:                              #B
+            if key in stats:                  #C
                 stacked = normalize(stacked, stats, key)
-            elif key.startswith("observation.images"):    #C
-                stacked = stacked.float() / 255.0
+            elif key.startswith("observation.images"):
+                if stacked.dtype == torch.uint8:
+                    stacked = stacked.float() / 255.0
+                if stacked.dtype.is_floating_point:
+                    stacked = stacked.clamp(0, 1)  #D
             out[key] = stacked
         return out
 
-    loader = DataLoader(dataset, batch_size=batch_size,
-                        shuffle=shuffle, collate_fn=collate_fn,
-                        num_workers=4)
+    loader = DataLoader(
+        dataset, batch_size=batch_size,
+        shuffle=shuffle, collate_fn=collate_fn,
+        num_workers=0,
+    )
     return loader, stats
 
-loader, stats = make_pickplace_dataloader(batch_size=32)
+loader, stats = make_pickplace_dataloader(batch_size=4)
 batch = next(iter(loader))
-print(f"state mean per dim: "
-      f"{batch['observation.state'].mean(0)}")            #D
-print(f"image range: [{batch['observation.images.top'].min():.2f},"
-      f" {batch['observation.images.top'].max():.2f}]")
+print(f"state mean: "
+      f"{batch['observation.state'].mean(0)}")  #E
+print(f"image range: "
+      f"[{batch['observation.images.up'].min():.2f}, "
+      f"{batch['observation.images.up'].max():.2f}]")
 ```
-- #A Parameterized on dataset ID so later chapters can swap in their own datasets without changing the function signature
-- #B Z-score normalize state and action using precomputed stats
-- #C Image features are scaled to `[0, 1]` — a different normalization path
-- #D After normalization, per-dimension state mean should be near zero across a batch
+- #A `DEFAULT_DATASET_ID` is `lerobot/svla_so101_pickplace`; the parameter is the extension point later chapters use to swap in their own datasets
+- #B `task` is a string field; keep it as a list rather than trying to stack into a tensor
+- #C Z-score normalize state and action using precomputed stats
+- #D Enforces the Ch3 `[0, 1]` image contract — handles the legacy uint8 path and clamps any float drift
+- #E After normalization, per-dimension state mean should be near zero across a batch
 
 **Expected output:**
 ```
-state mean per dim: tensor([-0.01,  0.02,  0.00, -0.03,  0.01,  0.00, -0.02])
+state mean per dim: tensor([-0.01,  0.02,  0.00, -0.03,  0.01,  0.00])
 image range: [0.00, 1.00]
 ```
-*Each state-mean component should sit within ~±0.1 of zero (within-batch noise around the dataset-level mean of zero); image pixel range should land in `[0, 1]` after the `x / 255` step. Any wildly off value here means a stat dict was mis-keyed or a feature slipped past the collate function.*
+*Each state-mean component should sit within ~±0.1 of zero (within-batch noise around the dataset-level mean of zero); image pixel range should land in `[0, 1]`. Any wildly off value here means a stat dict was mis-keyed or a feature slipped past the collate function.*
 
 **Callout Box: "Z-SCORE vs. MIN-MAX NORMALIZATION"**
 - **Z-score** — `(x - mean) / std`. Centers at zero, scales by spread. Preferred when features are roughly Gaussian, as joint angles and recorded actions tend to be.
@@ -684,7 +701,7 @@ image range: [0.00, 1.00]
 
 **Callout Box: "THE CHAPTER 3 CONTRACT"**
 - Chapter 3 imports `make_pickplace_dataloader()`, `normalize()`, and `denormalize()` directly from `ch02`.
-- It expects batches with keys `observation.state` (normalized), `observation.images.top`, `observation.images.wrist` (in `[0, 1]`), and `action` (normalized).
+- It expects batches with keys `observation.state` (normalized), `observation.images.up`, `observation.images.side` (in `[0, 1]`), and `action` (normalized). The `task` string and per-frame metadata (`episode_index`, `frame_index`, `index`, `timestamp`, `task_index`) ride along untouched.
 - After the model predicts a normalized action, `denormalize()` converts it back to environment scale before calling `env.step()`.
 - Treat the function signature `make_pickplace_dataloader(dataset_id, batch_size, shuffle)` as frozen — renaming or re-ordering arguments breaks every downstream chapter.
 
