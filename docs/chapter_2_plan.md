@@ -317,10 +317,11 @@ Scripted agent success rate: 50%
 - The chapter pins to `lerobot/svla_so101_pickplace`: 50 episodes of real-hardware teleoperated pick-and-place at 30 fps, 11,939 frames, two USB-camera streams (`up` and `side`).
 
 ### 2.3.2 The Feature Schema
-- Each sample is a dictionary with keys including `observation.state`, `observation.images.up`, `observation.images.side`, `action`, `episode_index`, `frame_index`, `timestamp`.
+- Each sample is a dictionary with keys including `observation.state`, `observation.images.up`, `observation.images.side`, `action`, `episode_index`, `frame_index`, `index`, `timestamp`, `task`, `task_index`.
 - `observation.state` is the 6-DOF SO-101 joint state (gripper is joint 6). `action` is the recorded 6-DOF teleoperation command — same shape, same convention.
-- Images come from two USB cameras: `up` (looking down at the workspace) and `side` (across the workspace).
-- `episode_index` groups frames into episodes; `frame_index` orders them within each episode.
+- Images come from two USB cameras: `up` (looking down at the workspace) and `side` (across the workspace). LeRobot 0.5.x returns them as `float32` in `[0, 1]` (already normalized on read).
+- `episode_index` groups frames into episodes; `frame_index` orders them within each episode; `index` is the position in the full dataset.
+- `task` is the natural-language task description (`"pink lego brick into the transparent box"`); `task_index` is its integer id. Late chapters use these for language conditioning.
 
 ### 2.3.3 Understanding delta_timestamps
 - LeRobot's `delta_timestamps` mechanism: request observation/action at relative time offsets from the current frame.
@@ -379,29 +380,35 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 
 **Expected output:**
 ```
-  observation.state: shape=torch.Size([6]), dtype=torch.float32
-  observation.images.up: shape=torch.Size([3, 480, 640]), dtype=torch.uint8
-  observation.images.side: shape=torch.Size([3, 480, 640]), dtype=torch.uint8
-  action: shape=torch.Size([6]), dtype=torch.float32
-  episode_index: 0
-  frame_index: 0
-  timestamp: 0.0
+  observation.images.up: shape=(3, 480, 640), dtype=torch.float32
+  observation.images.side: shape=(3, 480, 640), dtype=torch.float32
+  action: shape=(6,), dtype=torch.float32
+  observation.state: shape=(6,), dtype=torch.float32
+  timestamp: shape=(), dtype=torch.float32
+  frame_index: shape=(), dtype=torch.int64
+  episode_index: shape=(), dtype=torch.int64
+  index: shape=(), dtype=torch.int64
+  task_index: shape=(), dtype=torch.int64
+  task: pink lego brick into the transparent box
 
 Episode 0 length: 238 steps
 ```
-*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Episode lengths vary across the 50 trajectories — the teleoperator's pace differed run to run.*
+*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Images come back as `float32` in `[0, 1]` — LeRobot 0.5.x normalizes on read. The `task` field carries the natural-language goal for the demo, set up for the language-conditioned policies in later chapters.*
 
 **Table 2.2: LeRobot SO-101 Pick-and-Place Dataset Features**
 
 | Feature | Shape | Type | Description |
 |---------|-------|------|-------------|
 | `observation.state` | (6,) | float32 | Six SO-101 joint positions (gripper is joint 6) |
-| `observation.images.up` | (3, 480, 640) | uint8 | Up-mounted camera (looking down at workspace) |
-| `observation.images.side` | (3, 480, 640) | uint8 | Side-mounted camera (across workspace) |
+| `observation.images.up` | (3, 480, 640) | float32 | Up-mounted camera (looking down at workspace), normalized to `[0, 1]` |
+| `observation.images.side` | (3, 480, 640) | float32 | Side-mounted camera (across workspace), normalized to `[0, 1]` |
 | `action` | (6,) | float32 | Recorded teleoperation joint command |
 | `episode_index` | scalar | int64 | Episode this frame belongs to |
 | `frame_index` | scalar | int64 | Position within the episode |
+| `index` | scalar | int64 | Position within the full dataset (across episodes) |
 | `timestamp` | scalar | float32 | Seconds from episode start |
+| `task` | string | — | Natural-language task description, e.g. `"pink lego brick into the transparent box"` |
+| `task_index` | scalar | int64 | Integer id for the task string (1 unique task in this dataset) |
 
 **Callout Box: "WHAT IS delta_timestamps?"**
 - LeRobot's mechanism for requesting data at relative time offsets from a given frame.
