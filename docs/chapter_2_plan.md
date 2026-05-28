@@ -243,35 +243,34 @@ Listing 2.3 defines `run_scripted_episode`, the seven-phase controller expressed
 import numpy as np
 import sapien
 
-PHASES = ["approach", "descend", "grasp",
-          "lift", "transport", "place", "release"] #A
-
 def run_scripted_episode(
         planner, grasp_pose, goal_pos):
-    """7 phases via the motion planner."""
+    """Seven phases via the motion planner.
+
+    approach → descend → grasp → lift → transport → place → release.
+    """
     quat = grasp_pose.q
     goal = np.asarray(goal_pos)
 
-    planner.move_to_pose_with_screw(                #B
+    planner.move_to_pose_with_screw(                #A
         sapien.Pose([0, 0, 0.10]) * grasp_pose)
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.03]) * grasp_pose)
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.01]) * grasp_pose)
-    planner.close_gripper(gripper_state=-0.8)       #C
+    planner.close_gripper(gripper_state=-0.8)       #B
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.15]) * grasp_pose)
-    planner.move_to_pose_with_screw(                #D
+    planner.move_to_pose_with_screw(                #C
         sapien.Pose(goal + np.array([0, 0, 0.15]), quat))
     planner.move_to_pose_with_screw(
         sapien.Pose(goal + np.array([0, 0, 0.02]), quat))
-    planner.open_gripper()                          #E
+    planner.open_gripper()                          #D
 ```
-- #A Seven phases in execution order — labels for the keyframes below
-- #B Three target poses at decreasing Z above the grasp point. The planner solves IK and follows the joint trajectory for each
-- #C Partial close (`gripper_state=-0.8`) applies contact pressure on the cube without overclosing
-- #D Transport and place keep the grasp orientation. The cube travels parallel to its grasp axis
-- #E Open at the goal to drop the cube
+- #A Three target poses at decreasing Z above the grasp point (approach, descend, grasp). The planner solves IK and follows the joint trajectory for each
+- #B Partial close (`gripper_state=-0.8`) applies contact pressure on the cube without overclosing
+- #C Transport and place keep the grasp orientation. The cube travels parallel to its grasp axis
+- #D Open at the goal to release the cube
 
 Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` constructs the motion planner once per episode, computes a top-down grasp pose from the cube's spawn position, runs the seven phases, and tallies success from the env's `evaluate()`. Reported success rates climb well above zero but plateau below expert teleoperation, motivating the data-driven approach.
 

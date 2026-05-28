@@ -14,7 +14,7 @@ import sys
 
 try:
     from ch02.env import make_env
-    from ch02.scripted import PHASES, run_scripted_agent
+    from ch02.scripted import run_scripted_agent
 except ImportError as _exc:
     print(f"FAIL: import error: {_exc}")
     print('hint: did you `pip install -e ".[dev,data,sim]"`?')
@@ -25,7 +25,7 @@ N_EPISODES = 3
 
 def main() -> int:
     print("=== PR 3 scripted-policy smoke check ===\n")
-    print(f"[1/3] Imports ok — PHASES has {len(PHASES)} entries")
+    print("[1/3] Imports ok")
 
     print("[2/3] Building env (state mode, default joint control) ...")
     try:

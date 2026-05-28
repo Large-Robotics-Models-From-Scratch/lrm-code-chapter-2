@@ -12,38 +12,35 @@ is no recovery. That gap is the chapter's motivation for learned
 policies.
 """
 
+from typing import TYPE_CHECKING
+
+import gymnasium as gym
 import numpy as np
 import sapien
 from transforms3d.euler import euler2quat
 
-PHASES: list[str] = [
-    "approach",
-    "descend",
-    "grasp",
-    "lift",
-    "transport",
-    "place",
-    "release",
-]
+from ch02._metrics import _episode_success
+
+if TYPE_CHECKING:
+    from mani_skill.examples.motionplanning.so100.motionplanner import (
+        SO100ArmMotionPlanningSolver,
+    )
 
 
-def _episode_success(info: dict) -> bool:
-    """Read the success flag, tolerating ManiSkill vs legacy keys."""
-    if "success" in info:
-        return bool(info["success"])
-    if "is_success" in info:
-        return bool(info["is_success"])
-    return False
+def run_scripted_episode(
+    planner: "SO100ArmMotionPlanningSolver",
+    grasp_pose: sapien.Pose,
+    goal_pos: np.ndarray,
+) -> None:
+    """Execute the 7 keyframe phases via the motion planner.
 
+    approach → descend → grasp → lift → transport → place → release.
+    Returns nothing; read success via `env.unwrapped.evaluate()`.
 
-def run_scripted_episode(planner, grasp_pose, goal_pos) -> None:
-    """Execute the 7 phases via the motion planner.
-
-    ``planner`` is an ``SO100ArmMotionPlanningSolver`` already bound
-    to a fresh-reset env. ``grasp_pose`` is the target end-effector
-    pose at the moment of closure. ``goal_pos`` is the xyz drop
-    point. The function returns nothing; success is read off the env
-    afterwards via ``env.unwrapped.evaluate()``.
+    Args:
+        planner: SO100ArmMotionPlanningSolver bound to a fresh-reset env.
+        grasp_pose: Target end-effector pose at gripper closure.
+        goal_pos: `(3,)` xyz drop point in world coordinates.
     """
     quat = grasp_pose.q
     goal = np.asarray(goal_pos)
@@ -77,24 +74,45 @@ def run_scripted_episode(planner, grasp_pose, goal_pos) -> None:
     planner.open_gripper()
 
 
-def _compute_top_down_grasp_pose(env):
-    """Build a top-down grasp pose for the cube spawn position."""
+def _compute_top_down_grasp_pose(env: gym.Env) -> sapien.Pose:
+    """Build a top-down grasp pose for the cube's current spawn position.
+
+    Args:
+        env: Gymnasium env wrapping `PickCubeSO100-v1`.
+
+    Returns:
+        SAPIEN pose for the gripper at grasp time (rotated so the SO-100
+        closing axis aligns with the cube faces).
+    """
     unwrapped = env.unwrapped
     cube_pos = unwrapped.cube.pose.sp.p
+    # NOTE: closing=[1, 0, 0] assumes an axis-aligned cube; PickCubeSO100-v1
+    # spawns this way. For arbitrary cube yaw, derive from the OBB (see
+    # ManiSkill `motionplanning/so100/solutions/pick_cube.py`).
     base = unwrapped.agent.build_grasp_pose(
         approaching=np.array([0, 0, -1]),
         closing=np.array([1, 0, 0]),
         center=cube_pos,
     )
-    # SO-100's gripper frame requires a rotation correction so the
-    # closing axis lines up with the cube faces.
+    # SO-100's gripper frame needs this rotation so the closing axis
+    # lines up with the cube faces. Matches upstream verbatim:
+    # mani_skill/examples/motionplanning/so100/solutions/pick_cube.py:44
     return base * sapien.Pose(
         q=euler2quat(-np.pi / 2, 0, np.pi / 2)
     )
 
 
-def run_scripted_agent(env, n_episodes: int = 10) -> float:
-    """Run the scripted policy n_episodes; return success_rate."""
+def run_scripted_agent(env: gym.Env, n_episodes: int = 10) -> float:
+    """Run the scripted policy `n_episodes` times; report the success rate.
+
+    Args:
+        env: Gymnasium env from `make_env`. Must expose `env.unwrapped`
+            for cube/goal pose reads and `agent.build_grasp_pose`.
+        n_episodes: Number of episodes to roll out.
+
+    Returns:
+        Fraction of episodes where the cube landed in the goal zone.
+    """
     # Lazy import: keeps the module importable in environments without
     # the [sim] extra so tests using the MockPlanner pattern can run.
     from mani_skill.examples.motionplanning.so100.motionplanner import (

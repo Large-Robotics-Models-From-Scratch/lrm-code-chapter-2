@@ -75,16 +75,12 @@ def run_random_agent(
 ### `src/ch02/scripted.py` (listings 2.3, 2.4)
 
 ```python
-PHASES: list[str] = [
-    "approach", "descend", "grasp",
-    "lift", "transport", "place", "release",
-]
-
-def scripted_policy(
-    obs: dict,
-    state: dict,
-) -> np.ndarray:
-    """Returns a (7,) float32 action. Mutates `state` to advance phases."""
+def run_scripted_episode(
+    planner,                  # SO100ArmMotionPlanningSolver
+    grasp_pose: sapien.Pose,  # target end-effector pose at closure
+    goal_pos: np.ndarray,     # (3,) xyz drop point
+) -> None:
+    """Execute the 7 keyframe phases via the motion planner."""
 
 def run_scripted_agent(
     env: gym.Env,
@@ -93,7 +89,7 @@ def run_scripted_agent(
     """Returns success_rate."""
 ```
 
-`state` is a plain dict that the caller owns — keeps the function pure-ish (no module-level state), matches listing 2.3 exactly, and makes the per-episode reset trivial (`state = {"phase": "approach"}`).
+The keyframe-based approach replaces the earlier per-step state-machine: ManiSkill's `SO100ArmMotionPlanningSolver` solves IK and steps joint trajectories for each Cartesian keyframe, so the scripted code stays declarative. Phase names appear as inline numbered comments above each motion-planner call rather than as a top-level constant.
 
 ### `src/ch02/dataset.py` (listings 2.5, 2.6)
 

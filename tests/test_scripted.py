@@ -12,9 +12,8 @@ pytest.importorskip("sapien")
 
 import sapien  # noqa: E402
 
+from ch02._metrics import _episode_success  # noqa: E402
 from ch02.scripted import (  # noqa: E402
-    PHASES,
-    _episode_success,
     run_scripted_agent,
     run_scripted_episode,
 )
@@ -47,28 +46,10 @@ def _grasp_and_goal():
     return grasp_pose, goal_pos
 
 
-def test_phases_in_execution_order():
-    assert PHASES == [
-        "approach",
-        "descend",
-        "grasp",
-        "lift",
-        "transport",
-        "place",
-        "release",
-    ]
-
-
-def test_phases_length_is_seven():
-    """One-line sanity guard against careless edits to PHASES."""
-    assert len(PHASES) == 7
-
-
 def test_episode_success_helper():
     assert _episode_success({"success": True}) is True
     assert _episode_success({"success": False}) is False
-    assert _episode_success({"is_success": True}) is True
-    assert _episode_success({}) is False
+    assert _episode_success({}) is False  # missing key → False
 
 
 def test_episode_call_sequence():

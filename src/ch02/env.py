@@ -10,6 +10,8 @@ import gymnasium as gym
 import mani_skill.envs  # noqa: F401 — registers PickCubeSO100-v1
 import numpy as np
 
+from ch02._metrics import _episode_success
+
 
 def make_env(
     obs_mode: str = "rgb",
@@ -33,19 +35,6 @@ def make_env(
         control_mode=control_mode,
         render_mode=render_mode,
     )
-
-
-def _episode_success(info: dict) -> bool:
-    """Coerce `info["success"]` (a (1,) torch.bool) to a Python bool.
-
-    Args:
-        info: ManiSkill step's info dict.
-
-    Returns:
-        True iff the episode reported success.
-    """
-    # TODO: return np.ndarray if env is ever built with num_envs > 1.
-    return bool(info.get("success", False))
 
 
 def run_random_agent(
