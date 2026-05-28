@@ -5,20 +5,24 @@ Run from the repo root:
 
     python scripts/check_viz.py
 
-Loads the dataset, renders keyframes from episode 0, plots joint
-trajectories from the first three episodes, and saves two PNGs
-to /tmp/. Skips the scripted-action collection (needs Vulkan/sim).
+Exercises the dataset-side viz path: load_dataset, render_keyframes,
+plot_joint_trajectories. Saves two PNGs to /tmp/.
+
+Deliberately skipped here (covered by the notebook §2.4 cells):
+- collect_actions(env, ...) and capture_scripted_actions(env, ...) need
+  a constructed sim env; the latter also needs ManiSkill's motion planner,
+  which segfaults on some local setups (mplib 0.1.1, pinned by
+  mani-skill==3.0.1). Run on Colab T4 for the full three-way histogram.
+- plot_action_distributions(...) depends on the two above.
 """
 
 import sys
 
 try:
+    import numpy as np
+
     from ch02.dataset import load_dataset
-    from ch02.viz import (
-        collect_expert_actions,
-        plot_joint_trajectories,
-        render_keyframes,
-    )
+    from ch02.viz import plot_joint_trajectories, render_keyframes
 except ImportError as _exc:
     print(f"FAIL: import error: {_exc}")
     print('hint: did you `pip install -e ".[dev,data,sim]"`?')
@@ -42,9 +46,11 @@ def main() -> int:
 
     print("[2/4] Stacking all expert actions ...")
     try:
-        expert = collect_expert_actions(dataset)
+        expert = np.stack(
+            [np.asarray(dataset[i]["action"]) for i in range(len(dataset))]
+        )
     except Exception as exc:
-        print(f"  FAIL: collect_expert_actions error: {exc}")
+        print(f"  FAIL: stacking expert actions: {exc}")
         return 1
     print(f"  expert actions shape: {expert.shape}, dtype: {expert.dtype}")
 

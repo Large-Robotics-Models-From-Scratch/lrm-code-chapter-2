@@ -19,7 +19,6 @@ import torch  # noqa: E402
 from ch02.viz import (  # noqa: E402
     JOINT_NAMES,
     collect_actions,
-    collect_expert_actions,
     plot_action_distributions,
     plot_joint_trajectories,
     render_keyframes,
@@ -72,12 +71,6 @@ def test_render_keyframes_raises_for_missing_episode():
     ds = FakeDataset([0, 0, 1])
     with pytest.raises(ValueError, match="Episode 99"):
         render_keyframes(ds, episode_idx=99)
-
-
-def test_collect_expert_actions_stacks_into_2d_array():
-    ds = FakeDataset([0] * 5)
-    actions = collect_expert_actions(ds)
-    assert actions.shape == (5, 6)
 
 
 def test_plot_action_distributions_two_way():

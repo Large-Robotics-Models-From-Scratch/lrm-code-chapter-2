@@ -437,6 +437,7 @@ Episode 0 length: 238 steps
 
 ### 2.4.2 Action Distributions: Three-Way Per-Joint Comparison
 - Collect actions from the expert dataset, the scripted policy, and a random agent.
+- Mechanism note: the scripted policy is trajectory-level (the motion planner steps multiple frames per call), so its per-step actions are recovered by **intercepting `env.step`** — see `capture_scripted_actions` in `ch02.viz`. Random and expert actions use the natural sources (env action-space sampling, dataset frame indexing).
 - For each of the six action dimensions (five SO-100 arm joints + gripper as joint 6), plot a histogram with the three sources overlaid.
 - Expert distributions show structured, multi-modal patterns — different approach directions produce different joint trajectories. Scripted actions cluster around a few values. Random actions are uniform.
 - The point is the **shape of the action-space distribution** — random is uniform, scripted is concentrated, expert is structured and multi-modal — not a same-task quality comparison. The expert dataset is teleoperated "lego in box" on real SO-101 hardware; the scripted policy is solving the sim's cube-in-zone task. See §2.6 for the task-gap discussion and the Chapter 4 BC eval contract that follows from it.
@@ -445,6 +446,7 @@ Episode 0 length: 238 steps
 - Plot per-joint angle over time for several expert episodes on the same axes.
 - Episodes overlap in shape (all start, lift, transport, place) but differ in timing and amplitude depending on initial cube pose.
 - This visually confirms that a successful policy must be conditional on the observation, not a single memorized trajectory.
+- Figure 2.6 is produced by `plot_joint_trajectories(dataset, episode_indices)` from `ch02.viz`; the notebook §2.4 cell calls it directly.
 
 Listing 2.7 implements `render_keyframes` as a provided utility in `ch02.viz`. Import and call it as below; the source is shown for transparency about how the helper tiles the two camera views.
 
@@ -483,26 +485,28 @@ def render_keyframes(
 - #B Read the `up` and `side` camera streams (LeRobot 0.5.x returns them as float32 in `[0, 1]` — matplotlib accepts that directly)
 - #C `save_path=None` makes the function return-only by default; tests and notebook cells pass the canonical path when persistence is wanted
 
-Listing 2.8 collects actions from three sources — the dataset's expert teleoperation, the scripted motion-planner policy from §2.2, and uniform random sampling — and overlays per-dimension histograms. The three collectors live in `ch02.viz`; the comparison code is what the reader runs.
+Listing 2.8 collects actions from three sources — the dataset's expert teleoperation, the scripted motion-planner policy from §2.2, and uniform random sampling — and overlays per-dimension histograms. The dataset-side actions are a simple `np.stack`; the env-side actions go through `ch02.viz`.
 
 **Listing 2.8: Per-joint action distributions — expert vs. scripted vs. random**
 ```python
 import matplotlib.pyplot as plt
+import numpy as np
 from ch02.viz import (
     JOINT_NAMES,
     collect_actions,
-    collect_expert_actions,
-    collect_scripted_actions,
+    capture_scripted_actions,
 )
 
-expert = collect_expert_actions(dataset)             #A
-random_ = collect_actions(env, None, n_episodes=3)
-scripted = collect_scripted_actions(env, n_episodes=3)
+expert = np.stack(                                   #A
+    [np.asarray(dataset[i]["action"]) for i in range(len(dataset))]
+)
+random_ = collect_actions(env, None, n_episodes=3)   #B
+scripted = capture_scripted_actions(env, n_episodes=3)
 
 fig, axes = plt.subplots(2, 3, figsize=(15, 6))
 for j, name in enumerate(JOINT_NAMES):
     ax = axes.flat[j]
-    for arr, label in [(expert, "expert"),           #B
+    for arr, label in [(expert, "expert"),           #C
                        (scripted, "scripted"),
                        (random_, "random")]:
         ax.hist(arr[:, j], bins=40, alpha=0.5,
@@ -510,13 +514,14 @@ for j, name in enumerate(JOINT_NAMES):
     ax.set_title(name, fontsize=10)
     ax.legend(fontsize=8)
 plt.tight_layout()
-fig.savefig(                                         #C
+fig.savefig(                                         #D
     "figures/figure_2_5_action_distributions.png",
     dpi=300, bbox_inches="tight")
 ```
-- #A `collect_expert_actions` stacks every dataset frame's `action`; `collect_actions(env, None, ...)` samples uniformly from `env.action_space`; `collect_scripted_actions` wraps `env.step` to capture the joint commands the motion planner issues
-- #B Six SO-101 joints in a 2×3 grid (gripper is joint 6); overlapping histograms reveal the distributional gap per joint
-- #C Save at print resolution (300 DPI) per the figure style guide
+- #A Expert actions are pure dataset indexing — no env, no rollout — so they're an inline `np.stack`, not a wrapped helper
+- #B `collect_actions(env, None, ...)` samples uniformly from `env.action_space` (random branch); `capture_scripted_actions` intercepts `env.step` to record the joint commands the motion planner issues mid-trajectory
+- #C Six SO-100 joints in a 2×3 grid (gripper is joint 6); see §2.6 for what this comparison does and does not show
+- #D Save at print resolution (300 DPI) per the figure style guide
 
 **Figure 2.4: Expert Pick-and-Place Keyframes**
 - A 2x6 grid: top row is the `up` camera, bottom row is the `side` camera, columns are six keyframes from one expert episode spanning approach → grasp → lift → transport → place → release.

@@ -29,9 +29,9 @@ def render_keyframes(
     save_path: str | None = None,
 ) -> matplotlib.figure.Figure:
     """Two-row filmstrip of up/side camera keyframes from one episode."""
-    # Lazy import: ch02.dataset pulls lerobot which is in the [data]
-    # extra; viz callers that supply their own dataset shouldn't be
-    # forced to install lerobot just to plot.
+    # Lazy on purpose: ch02.dataset → lerobot ([data] extra). Top-level
+    # import here would make `import ch02.viz` require [data], breaking
+    # consumers that plot using their own dataset object.
     from ch02.dataset import episode_frames
 
     ep = episode_frames(dataset, episode_idx)
@@ -62,11 +62,23 @@ def collect_actions(
     n_episodes: int = 5,
     seed_offset: int = 200,
 ) -> np.ndarray:
-    """Run a step-level policy and stack the actions it issues.
+    """Run a step-level policy in `env` and stack the actions issued.
 
-    ``policy_fn=None`` means uniform sampling from ``env.action_space``.
+    Used by the §2.4 histogram (Listing 2.8) to gather the random branch.
     For the trajectory-level scripted policy (motion-planner based),
-    use ``collect_scripted_actions`` instead.
+    use `capture_scripted_actions` instead (it intercepts `env.step`
+    because the motion planner doesn't expose a per-step callable).
+
+    Args:
+        env: Gymnasium env from `make_env`.
+        policy_fn: `policy_fn(env, obs) -> action`. `None` means uniform
+            sampling from `env.action_space` — the random branch.
+        n_episodes: Number of episodes to roll out.
+        seed_offset: Added to the per-episode seed (default 200 keeps
+            these episodes disjoint from `run_random_agent`'s seeds 0..N).
+
+    Returns:
+        `(n_steps, action_dim)` float32 array of every action issued.
     """
     actions = []
     for ep in range(n_episodes):
@@ -74,7 +86,7 @@ def collect_actions(
         done = False
         while not done:
             if policy_fn is None:
-                action = env.action_space.sample()
+                action = env.action_space.sample()  # random branch
             else:
                 action = policy_fn(env, obs)
             actions.append(np.asarray(action).copy())
@@ -83,19 +95,28 @@ def collect_actions(
     return np.array(actions)
 
 
-def collect_scripted_actions(
+def capture_scripted_actions(
     env,
     n_episodes: int = 5,
 ) -> np.ndarray:
-    """Capture the joint commands the scripted policy issues.
+    """Intercept `env.step` to record actions the scripted policy issues.
 
-    Wraps ``env.unwrapped.step`` to record each action without
-    modifying its return value, then runs ``run_scripted_agent``.
-    Restores the original ``step`` even if the run errors out.
+    The scripted policy runs through ManiSkill's motion planner, which
+    emits actions inside `run_scripted_agent` rather than exposing them
+    as a per-step callable — so we monkey-patch `env.unwrapped.step` for
+    the duration of the run. Restores the original `step` even on error.
+
+    Args:
+        env: Gymnasium env from `make_env`.
+        n_episodes: Number of episodes to roll out.
+
+    Returns:
+        `(n_steps, action_dim)` float32 array of every action the motion
+        planner issued across the rollouts.
     """
-    # Lazy import: ch02.scripted pulls the ManiSkill motion planner
-    # (sim extra); viz callers using only the plot helpers shouldn't
-    # be forced to install the sim stack.
+    # Lazy on purpose: ch02.scripted → ManiSkill ([sim] extra). Top-level
+    # import here would make `import ch02.viz` require [sim] just for the
+    # plot helpers. Same reasoning as render_keyframes.
     from ch02.scripted import run_scripted_agent
 
     captured: list[np.ndarray] = []
@@ -112,13 +133,6 @@ def collect_scripted_actions(
     finally:
         unwrapped.step = original_step
     return np.array(captured)
-
-
-def collect_expert_actions(dataset) -> np.ndarray:
-    """Stack actions from every frame in the dataset."""
-    return np.stack(
-        [np.asarray(dataset[i]["action"]) for i in range(len(dataset))]
-    )
 
 
 def plot_action_distributions(
@@ -171,7 +185,7 @@ def plot_joint_trajectories(
     episodes); consider passing a sliced/state-only dataset variant
     for speed.
     """
-    # Lazy import — same reason as render_keyframes.
+    # Lazy on purpose — same [data]-extra rationale as render_keyframes.
     from ch02.dataset import episode_frames
 
     names = joint_names or JOINT_NAMES
