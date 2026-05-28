@@ -437,9 +437,9 @@ Episode 0 length: 238 steps
 
 ### 2.4.2 Action Distributions: Three-Way Per-Joint Comparison
 - Collect actions from the expert dataset, the scripted policy, and a random agent.
-- For each of the six action dimensions (five SO-101 arm joints + gripper as joint 6), plot a histogram with the three sources overlaid.
+- For each of the six action dimensions (five SO-100 arm joints + gripper as joint 6), plot a histogram with the three sources overlaid.
 - Expert distributions show structured, multi-modal patterns — different approach directions produce different joint trajectories. Scripted actions cluster around a few values. Random actions are uniform.
-- The gap between scripted and expert histograms is what behavior cloning has to close.
+- The point is the **shape of the action-space distribution** — random is uniform, scripted is concentrated, expert is structured and multi-modal — not a same-task quality comparison. The expert dataset is teleoperated "lego in box" on real SO-101 hardware; the scripted policy is solving the sim's cube-in-zone task. See §2.6 for the task-gap discussion and the Chapter 4 BC eval contract that follows from it.
 
 ### 2.4.3 Expert Joint Trajectories
 - Plot per-joint angle over time for several expert episodes on the same axes.
@@ -730,7 +730,14 @@ Comprehensive bulleted summary:
 - Visualizing expert action distributions per-joint reveals structured, multi-modal patterns that neither random sampling nor a hand-coded heuristic can reproduce. Visualizing expert joint trajectories shows that successful policies must be conditional, not memorized.
 - Neural networks need normalized inputs. Z-score normalization is applied to state and action; images are scaled to `[0, 1]`. Denormalization recovers environment-scale actions for use with `env.step()`.
 - The chapter's primary export is `make_pickplace_dataloader(dataset_id, batch_size, shuffle)`, parameterized on `dataset_id` so later chapters can swap in custom datasets without changing the interface.
+- **The sim env and the dataset are different tasks.** `PickCubeSO100-v1` spawns a generic colored cube with a fixed target zone; `svla_so101_pickplace` is real-hardware teleop of "pink lego brick into a transparent box." They share the 6-DOF action interface and not much else, which determines the Chapter 4 eval strategy — see the callout below.
 - Chapter 3 picks up exactly where this chapter ends: same DataLoader, same normalization conventions, same SO-100 embodiment. It adds the part this chapter deliberately left out — a model that learns to predict actions from observations, using a vision-language backbone and the first incarnation of a generative robot policy.
+
+**Callout Box: "SIM ENV ≠ DATASET TASK — THE CH4 BC EVAL CONTRACT"**
+- The sim env (`PickCubeSO100-v1`) and the expert dataset (`svla_so101_pickplace`) live in different scenes: different object (generic cube vs. pink lego), different goal geometry (target zone vs. transparent box), different visual distribution (sim render vs. real hardware), different camera setup. They share **only** the 6-DOF SO-100/SO-101 action interface and the 30 Hz control rate.
+- Therefore: **Chapter 4's behavior-cloning eval is action MSE on a held-out dataset split**, not rollout success against the sim env. A BC policy trained on dataset actions cannot be fairly scored by attempting the env's cube task — that would conflate policy quality with task transfer.
+- The §2.4 per-joint histogram is illustrative of action-space *structure* (random uniform → scripted concentrated → expert multi-modal), not a same-task policy benchmark.
+- What Chapter 3+ inherits from this chapter is the **data-and-action contract** (normalized DataLoader, action-space scale, denormalization for `env.step()`), not a task-level metric. Building a sim env that mirrors the dataset task is out of scope and not on the book's roadmap.
 
 ---
 
@@ -797,6 +804,7 @@ A short, opinionated reading list for readers who want to dig deeper into the to
 | "WHAT IS delta_timestamps?" | 2.3 | Explain LeRobot's temporal indexing mechanism |
 | "Z-SCORE vs. MIN-MAX NORMALIZATION" | 2.5 | Normalization strategy rationale |
 | "THE CHAPTER 3 CONTRACT" | 2.5 | Define the API boundary between chapters |
+| "SIM ENV ≠ DATASET TASK — THE CH4 BC EVAL CONTRACT" | 2.6 | Flag the sim/dataset task gap and pin Ch4's eval as held-out action MSE |
 
 ## Exercises Summary
 

@@ -17,13 +17,18 @@ DEFAULT_DATASET_ID: str = "lerobot/svla_so101_pickplace"
 
 
 def load_dataset(dataset_id: str = DEFAULT_DATASET_ID) -> LeRobotDataset:
-    """Construct the SO-101 pick-and-place dataset from HF Hub.
+    """Load the SO-101 pick-and-place expert dataset from Hugging Face Hub.
 
-    Downloads parquet shards and video archives on first call;
-    subsequent calls hit the local Hugging Face cache. Returns a
-    ``LeRobotDataset`` whose ``__getitem__`` yields a per-frame dict
-    of torch tensors (state, images, action) and scalar metadata
-    (episode_index, frame_index, timestamp).
+    First call downloads parquet shards + video archives (~1.5 GB);
+    subsequent calls hit the local HF cache.
+
+    Args:
+        dataset_id: HF Hub dataset ID. Defaults to the chapter's pin
+            (`lerobot/svla_so101_pickplace`).
+
+    Returns:
+        LeRobotDataset; `len(ds)` is the total frame count, `ds[i]` is
+        one frame (see `episode_frames` for the frame schema).
     """
     return LeRobotDataset(dataset_id)
 
@@ -32,12 +37,28 @@ def episode_frames(
     dataset: LeRobotDataset,
     episode_idx: int,
 ) -> list[dict]:
-    """Return all frames belonging to one episode, in trajectory order.
+    """Return all frames of one episode, in trajectory order.
 
-    Indexes each frame exactly once. Callers that need many episodes
-    are better off slicing via the dataset's episode metadata
-    directly — this is the readable per-episode primitive used by
-    Listing 2.6 and the keyframe-rendering helper in PR 5.
+    A plain `list[dict]` matches LeRobotDataset's per-frame `__getitem__`
+    return shape — each frame is already a dict — and lets callers iterate
+    or index without learning a new wrapper. Costs one pass over the
+    dataset; callers iterating many episodes should batch via the
+    dataset's episode metadata instead.
+
+    Args:
+        dataset: LeRobotDataset from `load_dataset`.
+        episode_idx: Zero-based episode index.
+
+    Returns:
+        Frames where `frame["episode_index"] == episode_idx`, ordered by
+        `frame_index`. Each frame is a dict with these keys:
+            observation.state: torch.float32 (6,) — joint positions
+            observation.images.up: torch.uint8 (3, H, W) — top camera
+            observation.images.side: torch.uint8 (3, H, W) — side camera
+            action: torch.float32 (6,) — recorded teleop command
+            episode_index, frame_index: int64 scalars
+            timestamp: float32 — seconds from episode start
+            next.done: bool — terminal-step flag
     """
     out: list[dict] = []
     for i in range(len(dataset)):
