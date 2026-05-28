@@ -106,6 +106,16 @@ def _build_collate_fn(stats: StatsDict):
     return collate_fn
 
 
+def _stats_from_meta(dataset) -> StatsDict | None:
+    """Return LeRobot's precomputed `meta/stats.json`, or None if absent."""
+    meta_stats = getattr(getattr(dataset, "meta", None), "stats", None)
+    if meta_stats is None:
+        return None
+    if not all(k in meta_stats for k in ("observation.state", "action")):
+        return None
+    return {k: meta_stats[k] for k in ("observation.state", "action")}
+
+
 def make_pickplace_dataloader(
     dataset_id: str = DEFAULT_DATASET_ID,
     batch_size: int = 64,
@@ -116,9 +126,14 @@ def make_pickplace_dataloader(
     The Ch3 contract. Do not rename or reorder these parameters.
     ``dataset_id`` is the first positional so later chapters can swap
     in custom datasets without changing the call shape.
+
+    Stats come from LeRobot's precomputed `meta/stats.json` when
+    available (the §2.5.3 reveal — saves 60-90s per fresh kernel on the
+    real dataset). Falls back to `compute_stats` (Listing 2.9) for
+    datasets without it.
     """
     dataset = load_dataset(dataset_id)
-    stats = compute_stats(dataset)
+    stats = _stats_from_meta(dataset) or compute_stats(dataset)
     loader = DataLoader(
         dataset,
         batch_size=batch_size,

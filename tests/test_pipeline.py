@@ -241,7 +241,7 @@ def test_stats_dict_alias_reexported():
 
 
 def test_make_pickplace_dataloader_end_to_end(monkeypatch):
-    """Patch load_dataset to a fake; verify the full builder runs."""
+    """Fallback path: dataset has no meta.stats; compute_stats runs."""
     fake = FakeDataset(n_frames=12)
     monkeypatch.setattr("ch02.pipeline.load_dataset", lambda _id: fake)
     loader, stats = make_pickplace_dataloader(
@@ -253,6 +253,31 @@ def test_make_pickplace_dataloader_end_to_end(monkeypatch):
     batch = next(iter(loader))
     assert batch["observation.state"].shape == (4, 6)
     assert batch["action"].shape == (4, 6)
+
+
+def test_make_pickplace_dataloader_uses_meta_stats_fast_path(monkeypatch):
+    """Fast path: precomputed meta.stats short-circuits compute_stats."""
+    fake = FakeDataset(n_frames=12)
+    # Inject a sentinel meta.stats so we can prove compute_stats was skipped
+    sentinel = {
+        "mean": torch.full((6,), 7.0),
+        "std": torch.ones(6),
+        "min": torch.zeros(6),
+        "max": torch.ones(6),
+    }
+    fake.meta = type("Meta", (), {"stats": {
+        "observation.state": sentinel,
+        "action": sentinel,
+    }})()
+    monkeypatch.setattr("ch02.pipeline.load_dataset", lambda _id: fake)
+
+    # Boom if compute_stats is called — proves we took the fast path.
+    def boom(_):
+        raise AssertionError("compute_stats ran despite meta.stats")
+    monkeypatch.setattr("ch02.pipeline.compute_stats", boom)
+
+    _, stats = make_pickplace_dataloader(dataset_id="ignored")
+    assert torch.equal(stats["observation.state"]["mean"], sentinel["mean"])
 
 
 def test_collate_clamps_float_images_out_of_range():
