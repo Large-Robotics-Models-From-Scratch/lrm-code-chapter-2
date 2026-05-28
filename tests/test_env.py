@@ -12,12 +12,11 @@ pytest.importorskip("mani_skill")
 from ch02.env import _episode_success, make_env, run_random_agent
 
 
-def test_episode_success_reads_both_keys():
-    """Helper handles ManiSkill's 'success' and legacy 'is_success'."""
+def test_episode_success_reads_maniskill_key():
+    """Helper reads ManiSkill's `success` key and returns a Python bool."""
     assert _episode_success({"success": True}) is True
     assert _episode_success({"success": False}) is False
-    assert _episode_success({"is_success": True}) is True
-    assert _episode_success({}) is False
+    assert _episode_success({}) is False  # missing key → False
 
 
 @pytest.mark.integration

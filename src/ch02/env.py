@@ -18,10 +18,14 @@ def make_env(
 ) -> gym.Env:
     """Construct the PickCubeSO100-v1 environment.
 
-    obs_mode is one of "state", "rgb", "rgbd", or "state_dict".
-    Use "state" for CPU-only local development where Vulkan is
-    unavailable; the chapter's notebook uses "rgb". Seeding is the
-    caller's responsibility via `env.reset(seed=...)`.
+    Args:
+        obs_mode: "state", "rgb", "rgbd", or "state_dict". Use "state"
+            for CPU-only local dev; the chapter's notebook uses "rgb".
+        control_mode: ManiSkill controller; default is joint-space deltas.
+        render_mode: Gymnasium render mode (use `None` to skip rendering).
+
+    Returns:
+        A Gymnasium env. Seed via `env.reset(seed=...)`.
     """
     return gym.make(
         "PickCubeSO100-v1",
@@ -32,17 +36,16 @@ def make_env(
 
 
 def _episode_success(info: dict) -> bool:
-    """Read the success flag out of an env step's info dict.
+    """Coerce `info["success"]` (a (1,) torch.bool) to a Python bool.
 
-    ManiSkill envs typically expose `success`; gym-lowcostrobot used
-    `is_success`. We check both so the function works across
-    embodiments without forcing callers to know which.
+    Args:
+        info: ManiSkill step's info dict.
+
+    Returns:
+        True iff the episode reported success.
     """
-    if "success" in info:
-        return bool(info["success"])
-    if "is_success" in info:
-        return bool(info["is_success"])
-    return False
+    # TODO: return np.ndarray if env is ever built with num_envs > 1.
+    return bool(info.get("success", False))
 
 
 def run_random_agent(
@@ -50,7 +53,19 @@ def run_random_agent(
     n_episodes: int = 10,
     seed_offset: int = 0,
 ) -> tuple[float, float]:
-    """Run uniformly random actions; return (success_rate, mean_return)."""
+    """Run uniformly random actions and report the performance floor.
+
+    Performance floor only; §2.4 collects actions separately for viz.
+
+    Args:
+        env: A Gymnasium env from `make_env`.
+        n_episodes: Number of episodes to roll out.
+        seed_offset: Added to the per-episode seed (default → seeds 0..N-1).
+
+    Returns:
+        (success_rate, mean_return) — success_rate ∈ [0, 1]; mean_return
+        is the per-episode sum of step rewards, averaged over `n_episodes`.
+    """
     successes, returns = 0, []
     for ep in range(n_episodes):
         obs, info = env.reset(seed=ep + seed_offset)
