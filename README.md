@@ -43,7 +43,13 @@ This repo follows the **Raschka-style hybrid model** for code (importable Python
 
 ## Dev setup
 
-**Prerequisites:** Python 3.12 (pinned to match `lerobot==0.5.1` and `lrm-code-agents/defaults.yml`), git, ~4 GB free disk for dependencies.
+**Prerequisites:**
+- Python 3.12 (pinned to match `lerobot==0.5.1` and `lrm-code-agents/defaults.yml`)
+- git, ~4 GB free disk for dependencies
+- **System FFmpeg** (libavutil + libavcodec + libavformat + libavdevice) — `lerobot[data]` pulls `torchcodec` for video decoding, which is a wrapper around system FFmpeg. Without it, dataset iteration crashes at `libavutil.so.* cannot open shared object file`.
+  - Ubuntu / Debian: `sudo apt install ffmpeg`
+  - macOS: `brew install ffmpeg`
+- **Vulkan loader + driver** (for ManiSkill rendering): `sudo apt install libvulkan1 mesa-vulkan-drivers vulkan-tools` on Ubuntu. Software rendering via mesa's `llvmpipe` is enough for state-mode env stepping and the unit tests; full GPU is recommended for RGB rendering at speed.
 
 ### Local install (Linux / macOS / WSL)
 

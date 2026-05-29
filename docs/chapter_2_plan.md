@@ -311,16 +311,17 @@ Scripted agent success rate: 50%
 **Content:**
 
 ### 2.3.1 Loading from the Hub
-- Use `lerobot.common.datasets.lerobot_dataset.LeRobotDataset` to load an SO-100 pick-and-place dataset.
-- The dataset is hosted on Hugging Face Hub — a single line downloads the parquet shards and image archives.
+- Use `lerobot.datasets.LeRobotDataset` to load the SO-101 pick-and-place expert dataset.
+- The dataset is hosted on Hugging Face Hub — a single line downloads the parquet shards and video archives.
 - Inspect dataset length, number of episodes, and feature names.
-- **Implementor note:** the exact dataset ID is pinned at implementation time from the available SO-100 pick-and-place datasets on the LeRobot Hub. The plan uses `lerobot/so100_pick_place` as a placeholder.
+- The chapter pins to `lerobot/svla_so101_pickplace`: 50 episodes of real-hardware teleoperated pick-and-place at 30 fps, 11,939 frames, two USB-camera streams (`up` and `side`).
 
 ### 2.3.2 The Feature Schema
-- Each sample is a dictionary with keys including `observation.state`, `observation.images.top`, `observation.images.wrist`, `action`, `episode_index`, `frame_index`, `timestamp`.
-- `observation.state` is the 6-DOF joint state plus gripper. `action` is the recorded 7-DOF teleoperation command.
-- Images come in two views (top-down third-person and wrist-mounted), matching the simulation observation structure.
-- `episode_index` groups frames into episodes; `frame_index` orders them within each episode.
+- Each sample is a dictionary with keys including `observation.state`, `observation.images.up`, `observation.images.side`, `action`, `episode_index`, `frame_index`, `index`, `timestamp`, `task`, `task_index`.
+- `observation.state` is the 6-DOF SO-101 joint state (gripper is joint 6). `action` is the recorded 6-DOF teleoperation command — same shape, same convention.
+- Images come from two USB cameras: `up` (looking down at the workspace) and `side` (across the workspace). LeRobot 0.5.x returns them as `float32` in `[0, 1]` (already normalized on read).
+- `episode_index` groups frames into episodes; `frame_index` orders them within each episode; `index` is the position in the full dataset.
+- `task` is the natural-language task description (`"pink lego brick into the transparent box"`); `task_index` is its integer id. Late chapters use these for language conditioning.
 
 ### 2.3.3 Understanding delta_timestamps
 - LeRobot's `delta_timestamps` mechanism: request observation/action at relative time offsets from the current frame.
@@ -332,45 +333,45 @@ Scripted agent success rate: 50%
 - Show how episodes begin (reset state) and end (success or timeout).
 - Count steps per episode — episodes have variable length depending on how quickly the teleoperator completed the task.
 
-Listing 2.5 instantiates the `LeRobotDataset` for the SO-100 pick-and-place dataset and prints its overall size and feature schema. The dataset ID is a placeholder — at implementation time, pin to a specific dataset from the LeRobot Hub.
+Listing 2.5 instantiates the `LeRobotDataset` for the SO-101 pick-and-place expert dataset and prints its overall size and feature schema. The download is one-time; subsequent calls hit the local Hugging Face cache.
 
 **Listing 2.5: Loading the SO-101 pick-and-place expert dataset**
 ```python
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 dataset = LeRobotDataset(
-    "lerobot/so100_pick_place",                         #A
+    "lerobot/svla_so101_pickplace",                  #A
 )
-print(f"Total frames: {len(dataset)}")                  #B
+print(f"Total frames: {len(dataset)}")               #B
 print(f"Episodes: {dataset.num_episodes}")
-print(f"Features: {list(dataset.features.keys())}")     #C
+print(f"Features: {list(dataset.features.keys())}") #C
 ```
-- #A Placeholder dataset ID — verify and replace with the chosen SO-100 pick-and-place dataset at implementation time
+- #A 50 episodes of teleoperated SO-101 pick-and-place collected on real hardware — the chapter's canonical expert dataset
 - #B Total number of (observation, action) frames across all episodes
 - #C Feature names include the state vector, two camera streams, the action, and episode/frame metadata
 
 **Expected output:**
 ```
-Total frames: 18421
+Total frames: 11939
 Episodes: 50
-Features: ['observation.state', 'observation.images.top',
-           'observation.images.wrist', 'action', 'episode_index',
-           'frame_index', 'timestamp', 'next.done']
+Features: ['observation.state', 'observation.images.up',
+           'observation.images.side', 'action', 'episode_index',
+           'frame_index', 'timestamp']
 ```
-*Frame and episode counts depend on which dataset is pinned. The feature list shape is what matters: a state vector, two image streams, an action, and trajectory metadata.*
+*Counts and feature names match the v3.0 codebase version of `svla_so101_pickplace`. If the dataset is republished under a different revision, both may shift.*
 
 Listing 2.6 indexes into the dataset to inspect a single frame's shape and dtype, then collects every frame belonging to episode zero to confirm episode-length variation. This concretizes the abstract feature schema for the reader.
 
 **Listing 2.6: Inspecting a single frame and one episode**
 ```python
-frame = dataset[0]                                      #A
+frame = dataset[0]                                   #A
 for key, val in frame.items():
     if hasattr(val, "shape"):
         print(f"  {key}: shape={val.shape}, dtype={val.dtype}")
     else:
         print(f"  {key}: {val}")
 
-ep_indices = [i for i in range(len(dataset))            #B
+ep_indices = [i for i in range(len(dataset))         #B
               if dataset[i]["episode_index"] == 0]
 print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 ```
@@ -379,33 +380,39 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 
 **Expected output:**
 ```
-  observation.state: shape=torch.Size([7]), dtype=torch.float32
-  observation.images.top: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
-  observation.images.wrist: shape=torch.Size([3, 224, 224]), dtype=torch.uint8
-  action: shape=torch.Size([7]), dtype=torch.float32
-  episode_index: 0
-  frame_index: 0
-  timestamp: 0.0
+  observation.images.up: shape=(3, 480, 640), dtype=torch.float32
+  observation.images.side: shape=(3, 480, 640), dtype=torch.float32
+  action: shape=(6,), dtype=torch.float32
+  observation.state: shape=(6,), dtype=torch.float32
+  timestamp: shape=(), dtype=torch.float32
+  frame_index: shape=(), dtype=torch.int64
+  episode_index: shape=(), dtype=torch.int64
+  index: shape=(), dtype=torch.int64
+  task_index: shape=(), dtype=torch.int64
+  task: pink lego brick into the transparent box
 
-Episode 0 length: 348 steps
+Episode 0 length: 238 steps
 ```
-*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Episode lengths vary from ~200 to ~500 frames.*
+*Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Images come back as `float32` in `[0, 1]` — LeRobot 0.5.x normalizes on read. The `task` field carries the natural-language goal for the demo, set up for the language-conditioned policies in later chapters.*
 
 **Table 2.2: LeRobot SO-101 Pick-and-Place Dataset Features**
 
 | Feature | Shape | Type | Description |
 |---------|-------|------|-------------|
-| `observation.state` | (7,) | float32 | Six joint positions + gripper state |
-| `observation.images.top` | (3, 224, 224) | uint8 | Top-down third-person camera |
-| `observation.images.wrist` | (3, 224, 224) | uint8 | Wrist-mounted camera |
-| `action` | (7,) | float32 | Recorded teleoperation command |
+| `observation.state` | (6,) | float32 | Six SO-101 joint positions (gripper is joint 6) |
+| `observation.images.up` | (3, 480, 640) | float32 | Up-mounted camera (looking down at workspace), normalized to `[0, 1]` |
+| `observation.images.side` | (3, 480, 640) | float32 | Side-mounted camera (across workspace), normalized to `[0, 1]` |
+| `action` | (6,) | float32 | Recorded teleoperation joint command |
 | `episode_index` | scalar | int64 | Episode this frame belongs to |
 | `frame_index` | scalar | int64 | Position within the episode |
+| `index` | scalar | int64 | Position within the full dataset (across episodes) |
 | `timestamp` | scalar | float32 | Seconds from episode start |
+| `task` | string | — | Natural-language task description, e.g. `"pink lego brick into the transparent box"` |
+| `task_index` | scalar | int64 | Integer id for the task string (1 unique task in this dataset) |
 
 **Callout Box: "WHAT IS delta_timestamps?"**
 - LeRobot's mechanism for requesting data at relative time offsets from a given frame.
-- Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 7)`.
+- Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 6)`.
 - This enables **action chunking** — predicting a short sequence of future actions instead of one at a time.
 - Action chunking improves policy smoothness and is the foundation for the ACT and diffusion-policy heads in Chapters 4 and 5.
 
@@ -430,9 +437,9 @@ Episode 0 length: 348 steps
 
 ### 2.4.2 Action Distributions: Three-Way Per-Joint Comparison
 - Collect actions from the expert dataset, the scripted policy, and a random agent.
-- For each of the seven action dimensions (six joints + gripper), plot a histogram with the three sources overlaid.
+- For each of the six action dimensions (five SO-100 arm joints + gripper as joint 6), plot a histogram with the three sources overlaid.
 - Expert distributions show structured, multi-modal patterns — different approach directions produce different joint trajectories. Scripted actions cluster around a few values. Random actions are uniform.
-- The gap between scripted and expert histograms is what behavior cloning has to close.
+- The point is the **shape of the action-space distribution** — random is uniform, scripted is concentrated, expert is structured and multi-modal — not a same-task quality comparison. The expert dataset is teleoperated "lego in box" on real SO-101 hardware; the scripted policy is solving the sim's cube-in-zone task. See §2.6 for the task-gap discussion and the Chapter 4 BC eval contract that follows from it.
 
 ### 2.4.3 Expert Joint Trajectories
 - Plot per-joint angle over time for several expert episodes on the same axes.
@@ -522,7 +529,7 @@ plt.savefig("figures/figure_2_5_action_distributions.png",
 
 **Figure 2.5: Per-Joint Action Distributions — Expert vs. Scripted vs. Random**
 - Seven overlapping histograms, one per action dimension, comparing the three policies.
-- Caption: "Action distributions for each of the seven action dimensions. Expert actions show structured, multi-modal clusters that reflect different grasp strategies. The scripted policy produces a simpler, lower-variance pattern. Random actions are uniform across the range. The gap between the scripted and expert histograms is what a learned policy must close."
+- Caption: "Action distributions for each of the six action dimensions. Expert actions show structured, multi-modal clusters that reflect different grasp strategies. The scripted policy produces a simpler, lower-variance pattern. Random actions are uniform across the range. The gap between the scripted and expert histograms is what a learned policy must close."
 
 **Figure 2.6: Expert Joint Trajectories**
 - Six small line plots, one per arm joint, showing joint angle over time for five overlaid expert episodes.
@@ -723,7 +730,14 @@ Comprehensive bulleted summary:
 - Visualizing expert action distributions per-joint reveals structured, multi-modal patterns that neither random sampling nor a hand-coded heuristic can reproduce. Visualizing expert joint trajectories shows that successful policies must be conditional, not memorized.
 - Neural networks need normalized inputs. Z-score normalization is applied to state and action; images are scaled to `[0, 1]`. Denormalization recovers environment-scale actions for use with `env.step()`.
 - The chapter's primary export is `make_pickplace_dataloader(dataset_id, batch_size, shuffle)`, parameterized on `dataset_id` so later chapters can swap in custom datasets without changing the interface.
+- **The sim env and the dataset are different tasks.** `PickCubeSO100-v1` spawns a generic colored cube with a fixed target zone; `svla_so101_pickplace` is real-hardware teleop of "pink lego brick into a transparent box." They share the 6-DOF action interface and not much else, which determines the Chapter 4 eval strategy — see the callout below.
 - Chapter 3 picks up exactly where this chapter ends: same DataLoader, same normalization conventions, same SO-100 embodiment. It adds the part this chapter deliberately left out — a model that learns to predict actions from observations, using a vision-language backbone and the first incarnation of a generative robot policy.
+
+**Callout Box: "SIM ENV ≠ DATASET TASK — THE CH4 BC EVAL CONTRACT"**
+- The sim env (`PickCubeSO100-v1`) and the expert dataset (`svla_so101_pickplace`) live in different scenes: different object (generic cube vs. pink lego), different goal geometry (target zone vs. transparent box), different visual distribution (sim render vs. real hardware), different camera setup. They share **only** the 6-DOF SO-100/SO-101 action interface and the 30 Hz control rate.
+- Therefore: **Chapter 4's behavior-cloning eval is action MSE on a held-out dataset split**, not rollout success against the sim env. A BC policy trained on dataset actions cannot be fairly scored by attempting the env's cube task — that would conflate policy quality with task transfer.
+- The §2.4 per-joint histogram is illustrative of action-space *structure* (random uniform → scripted concentrated → expert multi-modal), not a same-task policy benchmark.
+- What Chapter 3+ inherits from this chapter is the **data-and-action contract** (normalized DataLoader, action-space scale, denormalization for `env.step()`), not a task-level metric. Building a sim env that mirrors the dataset task is out of scope and not on the book's roadmap.
 
 ---
 
@@ -790,6 +804,7 @@ A short, opinionated reading list for readers who want to dig deeper into the to
 | "WHAT IS delta_timestamps?" | 2.3 | Explain LeRobot's temporal indexing mechanism |
 | "Z-SCORE vs. MIN-MAX NORMALIZATION" | 2.5 | Normalization strategy rationale |
 | "THE CHAPTER 3 CONTRACT" | 2.5 | Define the API boundary between chapters |
+| "SIM ENV ≠ DATASET TASK — THE CH4 BC EVAL CONTRACT" | 2.6 | Flag the sim/dataset task gap and pin Ch4's eval as held-out action MSE |
 
 ## Exercises Summary
 
