@@ -73,7 +73,7 @@ def main() -> int:
         rgb_env = make_env(obs_mode="rgb")
         rgb_env.reset(seed=0)
         img = rgb_env.render()
-        # ManiSkill may return a torch Tensor; coerce to numpy for matplotlib.
+        # ManiSkill may return a torch Tensor; coerce to numpy here.
         arr = img.cpu().numpy() if hasattr(img, "cpu") else img
         # Vectorized envs return (n_envs, H, W, 3); take the first scene.
         if arr.ndim == 4:
@@ -89,7 +89,7 @@ def main() -> int:
         print(f"  FAIL: render error: {exc}")
         print("  hint: SAPIEN can't render. If `vulkaninfo --summary`")
         print("        shows a device, the issue may be SAPIEN-specific;")
-        print("        rendering still works in Colab T4. Otherwise install")
+        print("        rendering may still work in Colab T4. Else install")
         print("        mesa-vulkan-drivers + libvulkan1.")
         return 1
     finally:

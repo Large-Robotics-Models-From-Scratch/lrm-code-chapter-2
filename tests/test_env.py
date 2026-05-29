@@ -9,7 +9,8 @@ import pytest
 
 pytest.importorskip("mani_skill")
 
-from ch02.env import _episode_success, make_env, run_random_agent
+from ch02._metrics import _episode_success
+from ch02.env import make_env, run_random_agent
 
 
 def test_episode_success_reads_maniskill_key():

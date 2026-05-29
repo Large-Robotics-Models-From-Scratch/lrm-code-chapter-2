@@ -222,13 +222,11 @@ Observations are nested dicts; keys below are dotted paths (e.g., `agent.qpos`).
 
 ### 2.2.1 Designing the Heuristic
 - Pick-and-place is naturally multi-phase. Decompose it: **approach** the cube from above → **descend** to grasp height → **close** the gripper → **lift** clear of the table → **transport** above the target → **descend** → **release**.
-- Represent each phase as a state with a target end-effector pose and a transition condition (distance threshold or gripper contact).
-- Use the env's `end_effector` action mode if available, or compute a simple Cartesian-to-joint mapping using the env's exposed kinematics. Either way the scripted controller is short and explicit.
+- Each phase is a target end-effector pose. PickCubeSO100-v1 ships with joint-space control modes only, so we lean on ManiSkill's bundled `SO100ArmMotionPlanningSolver` to convert Cartesian targets into joint trajectories. The scripted controller stays declarative — "here is where the gripper should go next" — and the planner handles IK.
 
 ### 2.2.2 Implementation
-- Track a phase index (0–6) across steps.
-- At each step, compute the target end-effector position for the current phase, derive an action that moves toward it, and advance the phase index when the transition condition fires.
-- Run the controller for multiple episodes and report success rate.
+- Define `run_scripted_episode(planner, grasp_pose, goal_pos)` that issues one motion-planner call per phase: three keyframes to descend onto the cube, one gripper close, one lift, two keyframes to the goal, one gripper open.
+- Wrap that in `run_scripted_agent(env, n_episodes)` which constructs the planner per episode, computes a top-down grasp pose from the cube spawn position, runs the seven phases, and tallies success from `env.unwrapped.evaluate()`.
 
 ### 2.2.3 Where the Heuristic Fails
 - The scripted policy succeeds in nominal conditions (cube placed cleanly in the workspace) but fails on:
@@ -238,92 +236,54 @@ Observations are nested dicts; keys below are dotted paths (e.g., `agent.qpos`).
 - It is open-loop within each phase — no recovery once the gripper misses
 - Key insight: even a "smart" heuristic plateaus far below expert performance. Learned policies can capture the subtle contact dynamics and recovery behaviors that rules miss.
 
-Listing 2.3 defines the seven-phase scripted controller as a single `scripted_policy` function. State is carried across calls in a small dictionary that records the current phase and frame counters — exactly the kind of bookkeeping a learned policy will replace with weights.
+Listing 2.3 defines `run_scripted_episode`, the seven-phase controller expressed as keyframe poses for ManiSkill's motion planner. Each `move_to_pose_with_screw` call internally solves IK and steps the joint trajectory until the target is reached — the scripted code itself stays declarative.
 
 **Listing 2.3: A multi-phase scripted pick-and-place policy**
 ```python
 import numpy as np
+import sapien
 
-PHASES = ["approach", "descend", "grasp",
-          "lift", "transport", "place", "release"]      #A
+def run_scripted_episode(
+        planner, grasp_pose, goal_pos):
+    """Seven phases via the motion planner.
 
-def scripted_policy(obs, state):
-    """A simple state-machine controller for pick-and-place."""
-    phase = state["phase"]
-    ee_pos = obs["arm_qpos"][-3:]                       #B
-    cube = obs["cube_pos"]
-    target = obs["target_pos"]
+    approach → descend → grasp → lift → transport → place → release.
+    """
+    quat = grasp_pose.q
+    goal = np.asarray(goal_pos)
 
-    if phase == "approach":                              #C
-        goal = cube + np.array([0.0, 0.0, 0.10])
-        gripper = -1.0
-        if np.linalg.norm(ee_pos - goal) < 0.01:
-            state["phase"] = "descend"
-    elif phase == "descend":
-        goal = cube + np.array([0.0, 0.0, 0.005])
-        gripper = -1.0
-        if abs(ee_pos[2] - goal[2]) < 0.005:
-            state["phase"] = "grasp"
-    elif phase == "grasp":                               #D
-        goal = ee_pos
-        gripper = 1.0
-        state["grasp_steps"] = state.get("grasp_steps", 0) + 1
-        if state["grasp_steps"] >= 5:
-            state["phase"] = "lift"
-    elif phase == "lift":
-        goal = cube + np.array([0.0, 0.0, 0.15])
-        gripper = 1.0
-        if ee_pos[2] >= goal[2] - 0.01:
-            state["phase"] = "transport"
-    elif phase == "transport":
-        goal = target + np.array([0.0, 0.0, 0.15])
-        gripper = 1.0
-        if np.linalg.norm(ee_pos[:2] - goal[:2]) < 0.01:
-            state["phase"] = "place"
-    elif phase == "place":
-        goal = target + np.array([0.0, 0.0, 0.02])
-        gripper = 1.0
-        if abs(ee_pos[2] - goal[2]) < 0.005:
-            state["phase"] = "release"
-    else:  # release
-        goal = ee_pos
-        gripper = -1.0                                   #E
-
-    direction = goal - ee_pos
-    joint_delta = np.clip(direction * 5.0, -1.0, 1.0)   #F
-    return np.concatenate([joint_delta,
-                           np.zeros(3),
-                           [gripper]]).astype(np.float32)
+    planner.move_to_pose_with_screw(                #A
+        sapien.Pose([0, 0, 0.10]) * grasp_pose)
+    planner.move_to_pose_with_screw(
+        sapien.Pose([0, 0, 0.03]) * grasp_pose)
+    planner.move_to_pose_with_screw(
+        sapien.Pose([0, 0, 0.01]) * grasp_pose)
+    planner.close_gripper(gripper_state=-0.8)       #B
+    planner.move_to_pose_with_screw(
+        sapien.Pose([0, 0, 0.15]) * grasp_pose)
+    planner.move_to_pose_with_screw(                #C
+        sapien.Pose(goal + np.array([0, 0, 0.15]), quat))
+    planner.move_to_pose_with_screw(
+        sapien.Pose(goal + np.array([0, 0, 0.02]), quat))
+    planner.open_gripper()                          #D
 ```
-- #A Seven phases of the state machine, in execution order
-- #B End-effector position is the last three components of `arm_qpos` in this env's convention
-- #C Approach: hover 10 cm above the cube with the gripper open
-- #D Grasp: hold position and close the gripper for several frames to ensure contact
-- #E Release the cube at the target
-- #F Convert the desired Cartesian motion into a joint-space action, clipped to the env's range
+- #A Three target poses at decreasing Z above the grasp point (approach, descend, grasp). The planner solves IK and follows the joint trajectory for each
+- #B Partial close (`gripper_state=-0.8`) applies contact pressure on the cube without overclosing
+- #C Transport and place keep the grasp orientation. The cube travels parallel to its grasp axis
+- #D Open at the goal to release the cube
 
-The `run_scripted_agent` function in listing 2.4 mirrors the random-agent loop but threads the per-episode state dictionary through `scripted_policy`. Reported success rates climb above zero but settle well below what teleoperators achieve, motivating the data-driven approach.
+Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` constructs the motion planner once per episode, computes a top-down grasp pose from the cube's spawn position, runs the seven phases, and tallies success from the env's `evaluate()`. Reported success rates climb well above zero but plateau below expert teleoperation, motivating the data-driven approach.
 
 **Listing 2.4: Evaluating the scripted policy**
 ```python
-def run_scripted_agent(env, n_episodes=10):
-    successes = 0
-    for ep in range(n_episodes):
-        obs, info = env.reset(seed=ep)
-        state = {"phase": "approach"}                    #A
-        done = False
-        while not done:
-            action = scripted_policy(obs, state)
-            obs, reward, terminated, truncated, info = env.step(action)
-            done = terminated or truncated
-        successes += int(info.get("is_success", False))
-    return successes / n_episodes
+from ch02.scripted import run_scripted_agent      #A
 
-rate = run_scripted_agent(env)
-print(f"Scripted agent success rate: {rate:.0%}")       #B
+env = make_env(obs_mode="state", render_mode=None)
+rate = run_scripted_agent(env, n_episodes=10)    #B
+print(f"Scripted agent success rate: {rate:.0%}")
 ```
-- #A The state machine carries its phase across steps via this dict
-- #B Expect a moderate success rate — better than random, far from expert
+- #A Provided utility from `ch02.scripted`. Internally constructs the motion planner, computes the grasp pose per episode, and counts successes
+- #B `state` mode is fine — the scripted policy reads cube and goal positions directly from `env.unwrapped`. It never touches the observation dict
 
 **Expected output:**
 ```
