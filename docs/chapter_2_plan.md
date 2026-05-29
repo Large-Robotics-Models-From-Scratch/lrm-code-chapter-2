@@ -4,7 +4,7 @@
 
 **Primary:** Hands-on Setup (Raschka-style) — environment, data, and pipeline construction.
 
-Code-heavy chapter. The reader installs tools, launches an SO-101 pick-and-place simulation, writes a scripted policy, loads expert data, and builds a reusable DataLoader. The embodiment chosen here — a low-cost 6-DOF arm with a parallel-jaw gripper — is the same embodiment used through Chapter 11, so every concept the reader learns about observations, actions, and rewards transfers directly.
+Code-heavy chapter. The reader installs tools, launches an SO-100 pick-and-place simulation, writes a scripted policy, loads expert data (recorded from real SO-101 teleop), and builds a reusable DataLoader. The embodiment family chosen here — a low-cost 6-DOF arm with a parallel-jaw gripper — is the same one used through Chapter 11: SO-100 in sim, SO-101 on hardware, with the small kinematic gap addressed explicitly in Chapter 9.
 
 ### A note on the listings
 
@@ -49,7 +49,7 @@ This is the simplest version of the task family the reader will end on. One cube
 ## Chapter Opening
 
 ### "This chapter covers" block (5 bullets)
-- Setting up the SO-101 simulation environment using ManiSkill3 and the Gymnasium interface
+- Setting up the SO-100 simulation environment using ManiSkill3 and the Gymnasium interface
 - Understanding observations, actions, episodes, and rewards for a 6-DOF arm with a gripper
 - Writing a scripted pick-and-place policy as a state machine, and observing its failure modes
 - Loading, inspecting, and visualizing expert demonstration data from the LeRobot Hub
@@ -57,7 +57,7 @@ This is the simplest version of the task family the reader will end on. One cube
 
 ### Hook paragraphs (2 paragraphs)
 - **Paragraph 1:** A robot policy is only as good as the data that trains it — and only as transferable as the embodiment that produced it. Before writing a single line of model code, you need three things: a simulated arm to act in, demonstrations from that arm to learn from, and a pipeline that feeds both into training. This chapter builds all three, on the embodiment you will use for the rest of the book.
-- **Paragraph 2:** You will work with `PickCubeSO100-v1`, a task where an SO-101 arm in simulation must grasp a cube from a starting position and release it inside a target zone. It looks simple, and that is the point. Pick-and-place is complex enough to expose why hand-coded heuristics struggle (contact dynamics, gripper timing, recovery from misalignment) yet simple enough to train on a laptop in an evening. By the end of this chapter, you will have a working data pipeline that Chapter 3 plugs directly into — and an embodiment that does not change again until Chapter 11.
+- **Paragraph 2:** You will work with `PickCubeSO100-v1`, a task where an SO-100 arm in simulation must grasp a cube from a starting position and release it inside a target zone. It looks simple, and that is the point. Pick-and-place is complex enough to expose why hand-coded heuristics struggle (contact dynamics, gripper timing, recovery from misalignment) yet simple enough to train on a laptop in an evening. By the end of this chapter, you will have a working data pipeline that Chapter 3 plugs directly into — and an embodiment family that does not change again until Chapter 11 (SO-100 in sim, SO-101 on hardware, bridged explicitly in Chapter 9).
 
 ### Section preview paragraph
 
@@ -69,7 +69,7 @@ Section 2.1 sets up the ManiSkill3 simulator and the Gymnasium interface, then r
 
 ---
 
-## Section 2.1: The SO-101 Pick-and-Place Environment
+## Section 2.1: The SO-100 Pick-and-Place Environment
 
 **Purpose:** Install the tooling, launch the simulation, and teach the Gymnasium API through direct interaction with the pick-and-place task.
 
@@ -85,8 +85,8 @@ Section 2.1 sets up the ManiSkill3 simulator and the Gymnasium interface, then r
 
 ### 2.1.2 The Gymnasium Interface
 - Define the core loop: `reset → step → step → ... → done`
-- **Observation space:** What the agent sees — joint positions and velocities for six arm joints, gripper state, cube pose, target pose, and (optionally) two camera images (top-down and wrist-mounted)
-- **Action space:** What the agent can do — a 7-DOF continuous action (six joint position deltas plus one gripper command in `[-1, 1]`)
+- **Observation space:** What the agent sees — joint positions and velocities for the six arm joints, end-effector pose, a grasped flag, the goal-zone center, the cube's world pose (under `state_dict` mode), and an RGB camera view (under `rgb` mode); see Table 2.1 for the exact keys and shapes
+- **Action space:** What the agent can do — a 6-DOF continuous action in `[-1, 1]`, one delta per SO-100 joint (the gripper is joint 6, not a separate dimension)
 - **Episode:** One complete pick-and-place attempt from reset to termination
 - **Step:** A single (observation, action, reward, next_observation) transition at the sim's control frequency
 - **Reward:** Pick-and-place uses a shaped reward — distance to cube while approaching, lift bonus during grasp, distance-to-target while transporting, and a success bonus when the cube enters the target zone
@@ -114,7 +114,7 @@ obs, info = env.reset(seed=42)                   #F
 print(f"Observation keys: {list(obs.keys())}")
 print(f"Action space: {env.action_space}")      #G
 ```
-- #A Gymnasium API
+- #A Provides the standard `reset` / `step` interface used by every env in this book — sim, real-hardware wrapper, or benchmark
 - #B Importing `mani_skill.envs` registers `PickCubeSO100-v1` and the rest of the SO-100 task family
 - #C Create the SO-100 pick-and-place environment
 - #D Return RGB camera observations (alternatives: `"state"`, `"rgbd"`, `"state_dict"`)
@@ -124,16 +124,16 @@ print(f"Action space: {env.action_space}")      #G
 
 **Expected output:**
 ```
-Observation keys: ['agent', 'extra', 'sensor_data']
+Observation keys: ['agent', 'extra', 'sensor_param', 'sensor_data']
 Action space: Box(-1.0, 1.0, (6,), float32)
 ```
-*Exact key names depend on the ManiSkill version; verify at implementation time per the editorial note below.*
+*Verified against `mani-skill==3.0.1`. `sensor_param` holds camera intrinsics/extrinsics; `sensor_data.base_camera.rgb` is the actual image. See Table 2.1 for the per-key shapes.*
 
-**Editorial note (implementation):** Table 2.1's observation/action schema and listings 2.3–2.4's scripted policy reference gym-lowcostrobot-style keys (`arm_qpos`, `cube_pos`, etc.); ManiSkill's actual observation dict uses different keys (`agent.qpos`, `extra.tcp_pose`, etc.) which will be confirmed and updated when PR 2 and PR 3 land.
+**Editorial note (implementation):** Table 2.1 above is ground-truthed against the live `PickCubeSO100-v1` env. Listings 2.3–2.4 (§2.2) still show the scripted policy against gym-lowcostrobot-style keys (`arm_qpos`, `cube_pos`); those listings will be aligned to the ManiSkill `state_dict` schema when PR 3 lands.
 
 The `run_random_agent` function in listing 2.2 executes the Gymnasium interaction loop with uniformly sampled actions and reports the success rate over a fixed number of episodes. This is the performance floor every learned policy must clear.
 
-**Listing 2.2: Running a random agent on PickPlaceCube**
+**Listing 2.2: Running a random agent on PickCubeSO100-v1**
 ```python
 import numpy as np
 
@@ -148,7 +148,7 @@ def run_random_agent(env, n_episodes=10):
             obs, reward, terminated, truncated, info = env.step(action)
             ep_return += reward
             done = terminated or truncated
-        successes += int(info.get("is_success", False)) #B
+        successes += int(info.get("success", False))    #B
         returns.append(ep_return)
     return successes / n_episodes, np.mean(returns)
 
@@ -156,8 +156,8 @@ success_rate, mean_return = run_random_agent(env)
 print(f"Random agent: success={success_rate:.0%} "
       f"return={mean_return:.2f}")                       #C
 ```
-- #A Sample uniformly from the 7-DOF continuous action space
-- #B The env reports success when the cube reaches the target zone
+- #A Sample uniformly from the 6-DOF continuous action space
+- #B Tally a success if the env's terminal info reports the cube landed in the target zone
 - #C Expect near-zero success — flailing the arm rarely grasps anything
 
 **Expected output:**
@@ -183,25 +183,28 @@ Random agent: success=0% return=-0.42
 - Run the seven-line Vulkan setup recipe documented in the repo's README before installing `mani-skill`. The recipe is copied verbatim from ManiSkill's official quickstart notebook and works on the free-tier T4.
 - On local Linux/macOS this is rarely an issue — system Vulkan drivers are usually already installed.
 
-**Figure 2.2: The SO-101 Pick-and-Place Task**
-- Annotated screenshot showing the arm in start pose, the cube on the workspace, the target zone outlined on the table, and a small inset of the wrist-camera view.
-- Caption: "The PickPlaceCube task. A 6-DOF arm with a parallel-jaw gripper (SO-100 URDF, branded as SO-101 for the book) must grasp the cube and release it inside the target zone. The reward combines approach distance, grasp success, transport distance, and a discrete success bonus on placement."
+**Figure 2.2: The SO-100 Pick-and-Place Task**
+- Annotated screenshot showing the arm in start pose, the cube on the workspace, the target zone outlined on the table, and an inset of the env's `base_camera` RGB view (the single sim camera; the expert dataset in §2.3 has two real-world views recorded from teleop).
+- Caption: "The `PickCubeSO100-v1` task. A 6-DOF arm with a parallel-jaw gripper (SO-100 in ManiSkill3) must grasp the cube and release it inside the target zone. The reward combines approach distance, grasp success, transport distance, and a discrete success bonus on placement. SO-100 is the simulation embodiment; SO-101 is the hardware sibling the chapter's dataset was recorded on and the deployment chapters target — the small kinematic gap is addressed in Chapter 9."
 
 **Figure 2.3: The Gymnasium Loop**
 - Flow diagram: `reset()` → observation → agent selects action → `step(action)` → (obs, reward, terminated, truncated, info) → loop back or done.
 - Caption: "The Gymnasium interaction loop. The agent receives an observation, selects an action, and the environment returns the next observation, a scalar reward, and termination flags. Every environment in this book — sim and real — exposes this interface."
 
-**Table 2.1: SO-101 Observation and Action Spaces**
+**Table 2.1: SO-100 Observation and Action Spaces**
+
+Observations are nested dicts; keys below are dotted paths (e.g., `agent.qpos`). ManiSkill envs are GPU-vectorizable, so each tensor carries a leading `(num_envs,)` dim — `1` for the single-env construction in Listing 2.1, dropped from the per-env shapes below for readability.
 
 | Component | Shape | Type | Description |
 |-----------|-------|------|-------------|
-| `arm_qpos` | (6,) | float32 | Joint positions in radians |
-| `arm_qvel` | (6,) | float32 | Joint velocities |
-| `cube_pos` | (3,) | float32 | Cube (x, y, z) world coordinates |
-| `target_pos` | (3,) | float32 | Target zone (x, y, z) |
-| `image_top` | (224, 224, 3) | uint8 | Top-down RGB camera |
-| `image_wrist` | (224, 224, 3) | uint8 | Wrist-mounted RGB camera |
-| Action | (7,) | float32 | Six joint position deltas + gripper command |
+| `agent.qpos` | (6,) | float32 | Joint positions in radians (6 SO-100 joints; gripper is joint 6) |
+| `agent.qvel` | (6,) | float32 | Joint velocities |
+| `extra.tcp_pose` | (7,) | float32 | End-effector world pose `(x, y, z, qw, qx, qy, qz)` |
+| `extra.goal_pos` | (3,) | float32 | Target zone center `(x, y, z)` |
+| `extra.is_grasped` | scalar | bool | Whether the gripper is currently holding the cube |
+| `extra.obj_pose` | (7,) | float32 | Cube world pose; exposed under `obs_mode="state_dict"` (used by the §2.2 scripted policy) |
+| `sensor_data.base_camera.rgb` | (128, 128, 3) | uint8 | RGB camera under `obs_mode="rgb"`; the default sim env ships a single view (the dataset in §2.3 has two — see §2.3 for the asymmetry) |
+| Action | (6,) | float32 | One position delta per SO-100 joint (gripper is joint 6) |
 
 **Exercise 2.1: Joint-space vs. end-effector-space control.** Call `make_env(control_mode="pd_ee_delta_pose")` instead of the default joint-space mode and re-run the random agent. The action space shape changes from `Box(7,)` to a Cartesian delta pose plus gripper. Do random rollouts succeed any more often? Why or why not? *Tip: end-effector control hides one form of difficulty (joint coordination) while exposing another (workspace boundaries).*
 
@@ -791,7 +794,7 @@ A short, opinionated reading list for readers who want to dig deeper into the to
 
 | Listing | Title | Section | Mode |
 |---------|-------|---------|------|
-| 2.1 | Installing the SO-101 sim and creating the environment | 2.1 | API illustration |
+| 2.1 | Installing the SO-100 sim and creating the environment | 2.1 | API illustration |
 | 2.2 | Running a random agent on PickPlaceCube | 2.1 | **Type-along** |
 | 2.3 | A multi-phase scripted pick-and-place policy | 2.2 | **Type-along** |
 | 2.4 | Evaluating the scripted policy | 2.2 | API illustration |
@@ -808,7 +811,7 @@ A short, opinionated reading list for readers who want to dig deeper into the to
 | Figure | Description | Type | Section |
 |--------|------------|------|---------|
 | 2.1 | Where this chapter sits in the book (roadmap recap, Ch2 highlighted) | Stage diagram | Opening |
-| 2.2 | The SO-101 Pick-and-Place Task | Annotated screenshot | 2.1 |
+| 2.2 | The SO-100 Pick-and-Place Task | Annotated screenshot | 2.1 |
 | 2.3 | The Gymnasium Loop | Flow diagram | 2.1 |
 | 2.4 | Expert Pick-and-Place Keyframes | Two-row image filmstrip | 2.4 |
 | 2.5 | Per-Joint Action Distributions | Overlaid histograms | 2.4 |
@@ -841,7 +844,7 @@ A short, opinionated reading list for readers who want to dig deeper into the to
 
 | Table | Description | Section |
 |-------|-------------|---------|
-| 2.1 | SO-101 Observation and Action Spaces | 2.1 |
+| 2.1 | SO-100 Observation and Action Spaces | 2.1 |
 | 2.2 | LeRobot SO-101 Pick-and-Place Dataset Features | 2.3 |
 | 2.3 | Chapter 2 pipeline timings across hardware | 2.5.6 |
 

@@ -189,7 +189,7 @@ def make_pickplace_dataloader(
 
 ### Layout
 
-One notebook: `notebooks/ch02.ipynb`. Section headers mirror the chapter (`## 2.1 The SO-101 Pick-and-Place Environment`, etc.). Within each section:
+One notebook: `notebooks/ch02.ipynb`. Section headers mirror the chapter (`## 2.1 The SO-100 Pick-and-Place Environment`, etc.). Within each section:
 
 - Markdown cell introducing the listing — caption format is **noun phrase, no colon, no "this listing..."** (e.g., `### Listing 2.5 Loading the SO-101 expert dataset`). Per `MANNING_STYLE.md` §1.5 and `book_learnings.md` craft patterns.
 - A **lead-in sentence** before the code cell, keyed to the listing's role:
@@ -383,9 +383,9 @@ tools: Read, Bash, WebFetch
 # Role
 
 You are the Chapter 2 guide for *Build a Large Robot Model (From Scratch)*.
-Chapter 2 is "Simulation & Data" — building the SO-101 pick-and-place
-environment, a scripted policy, the LeRobot dataset loader, and a normalized
-DataLoader.
+Chapter 2 is "Simulation & Data" — building the SO-100 pick-and-place
+simulation environment, a scripted policy, the LeRobot SO-101 expert
+dataset loader, and a normalized DataLoader.
 
 The reader is working through this chapter with the book on one side and a
 terminal on the other. They have already installed dependencies and cloned
