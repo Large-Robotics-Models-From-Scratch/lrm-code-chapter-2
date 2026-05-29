@@ -78,8 +78,8 @@ Section 2.1 sets up the ManiSkill3 simulator and the Gymnasium interface, then r
 **Content:**
 
 ### 2.1.1 Installation and First Launch
-- Install `lerobot` and `gym-lowcostrobot` (and their MuJoCo dependency)
-- Create a `PickPlaceCube-v0` environment instance configured for image observations
+- Install `lerobot` and `mani-skill` (and their SAPIEN dependency)
+- Create a `PickCubeSO100-v1` environment instance configured for image observations
 - Call `env.reset()` and inspect the observation dictionary
 - Call `env.step(action)` and inspect the return tuple
 
@@ -169,7 +169,7 @@ Random agent: success=0% return=-0.42
 **Callout Box: "WHAT IS GYMNASIUM?"**
 - Gymnasium (formerly OpenAI Gym) is the standard Python API for simulation and reinforcement-learning environments.
 - Every env exposes `reset()` and `step(action)` — a universal interface regardless of the task or embodiment.
-- LeRobot and `gym-lowcostrobot` register their environments as Gymnasium envs, so the same code patterns work for sim, real-hardware wrappers, and benchmark tasks across the ecosystem.
+- LeRobot and `mani-skill` register their environments as Gymnasium envs, so the same code patterns work for sim, real-hardware wrappers, and benchmark tasks across the ecosystem.
 
 **Callout Box: "WHY SO-100 IN SIM, SO-101 ON HARDWARE?"**
 - ManiSkill3 ships the SO-100 as a first-class robot (`mani_skill/agents/robots/so100/`). SO-101 is the newer revision with slightly different servos and tuning.
@@ -195,6 +195,8 @@ Random agent: success=0% return=-0.42
 
 Observations are nested dicts; keys below are dotted paths (e.g., `agent.qpos`). ManiSkill envs are GPU-vectorizable, so each tensor carries a leading `(num_envs,)` dim — `1` for the single-env construction in Listing 2.1, dropped from the per-env shapes below for readability.
 
+Observation keys depend on the env's `obs_mode`. With `obs_mode="state_dict"` (used by the scripted policy in §2.2) ManiSkill exposes:
+
 | Component | Shape | Type | Description |
 |-----------|-------|------|-------------|
 | `agent.qpos` | (6,) | float32 | Joint positions in radians (6 SO-100 joints; gripper is joint 6) |
@@ -206,7 +208,7 @@ Observations are nested dicts; keys below are dotted paths (e.g., `agent.qpos`).
 | `sensor_data.base_camera.rgb` | (128, 128, 3) | uint8 | RGB camera under `obs_mode="rgb"`; the default sim env ships a single view (the dataset in §2.3 has two — see §2.3 for the asymmetry) |
 | Action | (6,) | float32 | One position delta per SO-100 joint (gripper is joint 6) |
 
-**Exercise 2.1: Joint-space vs. end-effector-space control.** Call `make_env(control_mode="pd_ee_delta_pose")` instead of the default joint-space mode and re-run the random agent. The action space shape changes from `Box(7,)` to a Cartesian delta pose plus gripper. Do random rollouts succeed any more often? Why or why not? *Tip: end-effector control hides one form of difficulty (joint coordination) while exposing another (workspace boundaries).*
+**Exercise 2.1: Joint-space vs. end-effector-space control.** Call `make_env(control_mode="pd_ee_delta_pose")` instead of the default joint-space mode and re-run the random agent. The action space shape changes from `Box(6,)` (one delta per SO-100 joint) to a 7-dim Cartesian delta pose plus gripper command. Do random rollouts succeed any more often? Why or why not? *Tip: end-effector control hides one form of difficulty (joint coordination) while exposing another (workspace boundaries).*
 
 **Transition:** "The random agent has no chance. Can a simple rule do better?"
 
@@ -742,7 +744,7 @@ Comprehensive bulleted summary:
 - `PickCubeSO100-v1` is a single-object pick-and-place task on a 6-DOF arm with a parallel-jaw gripper, served by ManiSkill3 over SAPIEN. It is the carrier task and the carrier embodiment for the rest of the book.
 - The Gymnasium API provides a universal interface — `reset()` returns an initial observation, `step(action)` returns the next observation, reward, and termination flags. Every environment in this book, in sim and on hardware, exposes this interface.
 - A random agent on a 6-DOF arm essentially never succeeds. A multi-phase scripted policy (approach → descend → grasp → lift → transport → place → release) raises the success rate but plateaus far below expert performance because it cannot recover from misalignment or adapt to contact dynamics.
-- Expert demonstrations from teleoperation are stored in the LeRobot dataset format on Hugging Face Hub. Each frame includes joint state, two camera views, the recorded action, and episode/frame metadata.
+- Expert demonstrations from teleoperation are stored in the LeRobot dataset format on Hugging Face Hub. Each frame includes joint state, two camera views, the recorded action, episode/frame metadata, and a natural-language task string (used from Ch 6 for language conditioning).
 - LeRobot's `delta_timestamps` mechanism enables requesting data at relative time offsets — the foundation for action chunking in later chapters.
 - Visualizing expert action distributions per-joint reveals structured, multi-modal patterns that neither random sampling nor a hand-coded heuristic can reproduce. Visualizing expert joint trajectories shows that successful policies must be conditional, not memorized.
 - Neural networks need normalized inputs. Z-score normalization is applied to state and action; images are scaled to `[0, 1]`. Denormalization recovers environment-scale actions for use with `env.step()`.
