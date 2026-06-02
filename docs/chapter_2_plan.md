@@ -141,7 +141,7 @@ The `run_random_agent` function in listing 2.2 executes the Gymnasium interactio
 **Listing 2.2: Running a random agent on PickCubeSO100-v1**
 ```python
 import numpy as np
-from ch02.viz import render_env_filmstrip
+from ch02.viz import record_env_video
 
 def run_random_agent(env, n_episodes=10):
     successes, returns = 0, []
@@ -162,12 +162,12 @@ success_rate, mean_return = run_random_agent(env)
 print(f"Random agent: success={success_rate:.0%} "
       f"return={mean_return:.2f}")                       #C
 
-render_env_filmstrip(env, n_steps=80, n_frames=6, seed=0) #D
+record_env_video(env, n_steps=200, seed=0, fps=20) #D
 ```
 - #A Sample uniformly from the 6-DOF continuous action space
 - #B Tally a success if the env's terminal info reports the cube landed in the target zone
 - #C Expect near-zero success — flailing the arm rarely grasps anything
-- #D Replay one rollout from a fixed seed and tile 6 evenly-spaced render frames. Reading the filmstrip makes "random actions" concrete — the arm jitters across the workspace, the cube rarely moves
+- #D Record a ~10-second MP4 of the random policy (auto-reset on truncation, so the clip spans ~4 episodes since the env's horizon is ~50 steps). Returns `IPython.display.Video` for inline playback in Jupyter/Colab. Watching the arm flail makes "random actions" concrete in a way the success-rate number never can
 
 **Expected output:**
 ```
@@ -293,14 +293,19 @@ Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` co
 
 **Listing 2.4: Evaluating the scripted policy**
 ```python
-from ch02.scripted import run_scripted_agent      #A
+from ch02.scripted import run_scripted_agent           #A
+from ch02.viz import record_scripted_episode_video
 
 env = make_env(obs_mode="state", render_mode=None)
-rate = run_scripted_agent(env, n_episodes=10)    #B
+rate = run_scripted_agent(env, n_episodes=10)         #B
 print(f"Scripted agent success rate: {rate:.0%}")
+
+video_env = make_env(obs_mode="state", render_mode="rgb_array") #C
+record_scripted_episode_video(video_env, n_episodes=1, fps=20)
 ```
 - #A Provided utility from `ch02.scripted`. Internally constructs the motion planner, computes the grasp pose per episode, and counts successes
 - #B `state` mode is fine — the scripted policy reads cube and goal positions directly from `env.unwrapped`. It never touches the observation dict
+- #C Record one scripted rollout as MP4 for inline playback. The helper monkey-patches `env.step` to capture `env.render()` after each physics step — same pattern as `capture_scripted_actions`. A separate `rgb_array`-mode env is needed because the success-rate env above was built with `render_mode=None` for throughput
 
 **Expected output:**
 ```
@@ -465,42 +470,19 @@ Episode 0 length: 303 steps
 - This visually confirms that a successful policy must be conditional on the observation, not a single memorized trajectory.
 - Figure 2.6 is produced by `plot_joint_trajectories(dataset, episode_indices)` from `ch02.viz`; the notebook §2.4 cell calls it directly.
 
-Listing 2.7 implements `render_keyframes` as a provided utility in `ch02.viz`. Import and call it as below; the source is shown for transparency about how the helper tiles the two camera views.
+Listing 2.7 replays one expert episode as an MP4 with both camera views stacked side-by-side, using `record_dataset_episode_video` from `ch02.viz`. The helper pulls per-frame images from the dataset in trajectory order, converts each tensor from `(3, H, W)` float `[0, 1]` to `(H, W, 3)` uint8, concatenates the cameras horizontally, and writes an MP4 at the dataset's native 30 fps. The result is roughly a 10-second clip that plays inline in Jupyter or Colab.
 
-**Listing 2.7: Rendering expert keyframes from both camera views**
+**Listing 2.7: Playing an expert episode with both camera views**
 ```python
-import matplotlib.pyplot as plt
-import numpy as np
-from ch02.dataset import episode_frames
+from ch02.viz import record_dataset_episode_video
 
-def render_keyframes(
-        dataset, episode_idx=0, n_frames=6, save_path=None):
-    """2-row filmstrip of up/side keyframes from one episode."""
-    ep = episode_frames(dataset, episode_idx)        #A
-    idxs = np.linspace(0, len(ep) - 1,
-                       n_frames, dtype=int)
-
-    fig, axes = plt.subplots(
-        2, n_frames, figsize=(3 * n_frames, 6))
-    for col, i in enumerate(idxs):
-        up = ep[i]["observation.images.up"]          #B
-        side = ep[i]["observation.images.side"]
-        axes[0, col].imshow(up.permute(1, 2, 0).numpy())
-        axes[0, col].set_title(f"step {i}", fontsize=10)
-        axes[1, col].imshow(side.permute(1, 2, 0).numpy())
-        for r in (0, 1):
-            axes[r, col].axis("off")
-    axes[0, 0].set_ylabel("up view", fontsize=10)
-    axes[1, 0].set_ylabel("side view", fontsize=10)
-    plt.tight_layout()
-    if save_path is not None:                        #C
-        fig.savefig(save_path, dpi=300,
-                    bbox_inches="tight")
-    return fig
+record_dataset_episode_video(                   #A
+    dataset, episode_idx=0,
+    cameras=("up", "side"), fps=30,             #B
+)
 ```
-- #A Reuse `episode_frames` from `ch02.dataset` instead of re-deriving the filter inline; same primitive Listing 2.6 uses
-- #B Read the `up` and `side` camera streams (LeRobot 0.5.x returns them as float32 in `[0, 1]` — matplotlib accepts that directly)
-- #C `save_path=None` makes the function return-only by default; tests and notebook cells pass the canonical path when persistence is wanted
+- #A Returns `IPython.display.Video` (embed=True, base64-encoded into the notebook) so the cell renders the player inline without an external file dependency
+- #B Stacking `("up", "side")` produces a 480×1280 frame per timestep; pass `("up",)` for a single-camera preview (used by the post-Listing 2.6 cell)
 
 Listing 2.8 collects actions from three sources — the dataset's expert teleoperation, the scripted motion-planner policy from §2.2, and uniform random sampling — and overlays per-dimension histograms. The dataset-side actions are a simple `np.stack`; the env-side actions go through `ch02.viz`.
 

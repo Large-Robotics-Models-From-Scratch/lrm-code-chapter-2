@@ -221,12 +221,18 @@ def render_env_filmstrip(
 ) -> matplotlib.figure.Figure:
     """Run env for `n_steps` and tile `n_frames` evenly-spaced RGB renders.
 
+    Auto-resets on episode end (seed varied per episode) so the filmstrip
+    spans the full step budget even when the env truncates early — useful
+    for short-horizon tasks like PickCube (horizon ~50 steps). Panel titles
+    include the episode index so the reader can see the resets even when
+    per-frame motion is subtle.
+
     Args:
         env: Gymnasium env with `render_mode="rgb_array"` set.
-        n_steps: Total step budget for the rollout.
+        n_steps: Total step budget (may cover many episodes).
         n_frames: Number of frames to display in the filmstrip.
         action_fn: `action_fn(env, obs) -> action`. None → uniform random.
-        seed: Seed for `env.reset` (deterministic filmstrip across runs).
+        seed: Base seed for `env.reset`; episode N uses `seed + N`.
         save_path: If set, also `savefig` at 300 dpi.
 
     Returns:
@@ -234,7 +240,9 @@ def render_env_filmstrip(
     """
     capture_idxs = np.linspace(0, n_steps - 1, n_frames, dtype=int).tolist()
     capture_at = set(capture_idxs)
-    obs, _ = env.reset(seed=seed)
+    ep = 0
+    ep_step = 0
+    obs, _ = env.reset(seed=seed + ep)
     frames = []
     for step in range(n_steps):
         if step in capture_at:
@@ -245,26 +253,216 @@ def render_env_filmstrip(
                 arr = np.asarray(img)
             if arr.ndim == 4:  # vectorized envs return (n_envs, H, W, 3)
                 arr = arr[0]
-            frames.append((step, arr))
+            frames.append((ep, ep_step, np.asarray(arr).copy()))
+        if action_fn is not None:
+            action = action_fn(env, obs)
+        else:
+            action = env.action_space.sample()
+        obs, _, terminated, truncated, _ = env.step(action)
+        ep_step += 1
+        if bool(terminated) or bool(truncated):
+            ep += 1
+            ep_step = 0
+            obs, _ = env.reset(seed=seed + ep)
+
+    fig, axes = plt.subplots(1, len(frames), figsize=(3 * len(frames), 3))
+    if len(frames) == 1:
+        axes = [axes]
+    for ax, (ep_idx, ep_s, img) in zip(axes, frames):
+        ax.imshow(img)
+        ax.set_title(f"ep {ep_idx} · step {ep_s}", fontsize=10)
+        ax.axis("off")
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=300, bbox_inches="tight")
+    return fig
+
+
+def record_env_video(
+    env,
+    n_steps: int = 200,
+    action_fn: Callable | None = None,
+    seed: int = 0,
+    fps: int = 20,
+    save_path: str | None = None,
+):
+    """Record a rollout as MP4 video, auto-resetting on episode end.
+
+    Every step's `env.render()` frame is captured and written to an
+    MP4 via imageio + ffmpeg. The default policy is uniform random;
+    pass `action_fn` to swap in a scripted/learned controller.
+
+    Args:
+        env: Gymnasium env with `render_mode="rgb_array"` set.
+        n_steps: Total step budget (may cover many episodes).
+        action_fn: `action_fn(env, obs) -> action`. None → uniform random.
+        seed: Base seed for `env.reset`; episode N uses `seed + N`.
+        fps: Output video frame rate.
+        save_path: Where to write the MP4. If None, a temp file is used.
+
+    Returns:
+        `IPython.display.Video` for inline notebook display. The `.filename`
+        attribute holds the on-disk path.
+    """
+    import tempfile
+
+    import imageio.v2 as imageio
+    from IPython.display import Video
+
+    if save_path is None:
+        tf = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        save_path = tf.name
+        tf.close()
+
+    ep = 0
+    obs, _ = env.reset(seed=seed + ep)
+    frames = []
+    for _ in range(n_steps):
+        img = env.render()
+        if hasattr(img, "cpu"):
+            arr = img.cpu().numpy()
+        else:
+            arr = np.asarray(img)
+        if arr.ndim == 4:  # vectorized envs return (n_envs, H, W, 3)
+            arr = arr[0]
+        frames.append(np.asarray(arr, dtype=np.uint8).copy())
         if action_fn is not None:
             action = action_fn(env, obs)
         else:
             action = env.action_space.sample()
         obs, _, terminated, truncated, _ = env.step(action)
         if bool(terminated) or bool(truncated):
-            break
+            ep += 1
+            obs, _ = env.reset(seed=seed + ep)
 
-    fig, axes = plt.subplots(1, len(frames), figsize=(3 * len(frames), 3))
-    if len(frames) == 1:
-        axes = [axes]
-    for ax, (step, img) in zip(axes, frames):
-        ax.imshow(img)
-        ax.set_title(f"step {step}", fontsize=10)
-        ax.axis("off")
-    plt.tight_layout()
-    if save_path is not None:
-        fig.savefig(save_path, dpi=300, bbox_inches="tight")
-    return fig
+    imageio.mimsave(save_path, frames, fps=fps, macro_block_size=1)
+    return Video(save_path, embed=True)
+
+
+def record_dataset_episode_video(
+    dataset,
+    episode_idx: int = 0,
+    cameras: Iterable[str] = ("up", "side"),
+    fps: int = 30,
+    save_path: str | None = None,
+):
+    """Replay one LeRobot episode as MP4, stacking camera views.
+
+    Each frame's `observation.images.<cam>` tensors (torch float32 in
+    `[0, 1]`, layout `(3, H, W)`) are converted to uint8 RGB and
+    horizontally concatenated across the requested cameras. Output frame
+    rate defaults to 30 fps to match the SO-101 dataset's native cadence.
+
+    Args:
+        dataset: LeRobotDataset (frames must include the cameras requested).
+        episode_idx: Zero-based episode index.
+        cameras: Camera suffixes to stack left-to-right (e.g. `("up",)`
+            for a single view or `("up", "side")` for both).
+        fps: Output video frame rate.
+        save_path: Where to write the MP4. If None, a temp file is used.
+
+    Returns:
+        `IPython.display.Video` for inline notebook display.
+    """
+    import tempfile
+
+    import imageio.v2 as imageio
+    from IPython.display import Video
+
+    # Lazy on purpose: ch02.dataset → lerobot ([data] extra). See
+    # render_keyframes for the same lazy-import rationale.
+    from ch02.dataset import episode_frames
+
+    if save_path is None:
+        tf = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        save_path = tf.name
+        tf.close()
+
+    ep = episode_frames(dataset, episode_idx)
+    if len(ep) == 0:
+        raise ValueError(f"Episode {episode_idx} not in dataset")
+
+    cams = list(cameras)
+    frames = []
+    for frame in ep:
+        panels = []
+        for cam in cams:
+            t = frame[f"observation.images.{cam}"]
+            arr = t.permute(1, 2, 0).numpy()  # (H, W, 3) float32 in [0,1]
+            arr = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+            panels.append(arr)
+        if len(panels) > 1:
+            stacked = np.concatenate(panels, axis=1)
+        else:
+            stacked = panels[0]
+        frames.append(stacked)
+
+    imageio.mimsave(save_path, frames, fps=fps, macro_block_size=1)
+    return Video(save_path, embed=True)
+
+
+def record_scripted_episode_video(
+    env,
+    n_episodes: int = 1,
+    fps: int = 20,
+    save_path: str | None = None,
+):
+    """Record scripted-policy rollouts as MP4 by intercepting `env.step`.
+
+    The motion planner emits actions inside `run_scripted_agent`, so we
+    monkey-patch `env.unwrapped.step` to also call `env.render()` after
+    each physics step and accumulate frames (same pattern as
+    `capture_scripted_actions`). Restores the original `step` even on error.
+
+    Requires `env` constructed with `render_mode="rgb_array"`.
+
+    Args:
+        env: Gymnasium env from `make_env(render_mode="rgb_array")`.
+        n_episodes: Number of scripted rollouts to record.
+        fps: Output video frame rate.
+        save_path: Where to write the MP4. If None, a temp file is used.
+
+    Returns:
+        `IPython.display.Video` for inline notebook display.
+    """
+    import tempfile
+
+    import imageio.v2 as imageio
+    from IPython.display import Video
+
+    # Lazy: scripted.py → ManiSkill ([sim] extra). Same reason as
+    # capture_scripted_actions.
+    from ch02.scripted import run_scripted_agent
+
+    if save_path is None:
+        tf = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        save_path = tf.name
+        tf.close()
+
+    frames: list[np.ndarray] = []
+    unwrapped = env.unwrapped
+    original_step = unwrapped.step
+
+    def capture_step(action):
+        result = original_step(action)
+        img = env.render()
+        if hasattr(img, "cpu"):
+            arr = img.cpu().numpy()
+        else:
+            arr = np.asarray(img)
+        if arr.ndim == 4:
+            arr = arr[0]
+        frames.append(np.asarray(arr, dtype=np.uint8).copy())
+        return result
+
+    unwrapped.step = capture_step
+    try:
+        run_scripted_agent(env, n_episodes=n_episodes)
+    finally:
+        unwrapped.step = original_step
+
+    imageio.mimsave(save_path, frames, fps=fps, macro_block_size=1)
+    return Video(save_path, embed=True)
 
 
 def plot_phase_keyframes(

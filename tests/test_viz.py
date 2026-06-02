@@ -24,6 +24,8 @@ from ch02.viz import (  # noqa: E402
     plot_joint_trajectories,
     plot_normalization_effect,
     plot_stats,
+    record_dataset_episode_video,
+    record_env_video,
     render_env_filmstrip,
     render_keyframes,
 )
@@ -243,6 +245,59 @@ def test_render_env_filmstrip_save_path_writes_file(tmp_path):
     render_env_filmstrip(env, n_steps=10, n_frames=3, save_path=str(out))
     assert out.exists()
     assert out.stat().st_size > 0
+
+
+# -------------- record_env_video --------------
+
+def test_record_env_video_writes_mp4(tmp_path):
+    """Captures frames + writes a non-empty MP4 via imageio + ffmpeg."""
+    env = _FilmstripFakeEnv()
+    out = tmp_path / "rollout.mp4"
+    video = record_env_video(
+        env, n_steps=8, seed=0, fps=10, save_path=str(out),
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
+    # IPython.display.Video carries the path it embedded.
+    assert getattr(video, "filename", None) == str(out)
+
+
+# -------------- record_dataset_episode_video --------------
+
+def _ds_with_video_frames(action_dim=6, state_dim=6):
+    """FakeDataset with realistic image dtype/shape for video helper."""
+    ds = FakeDataset([0] * 4 + [1] * 3, action_dim, state_dim)
+    # FakeDataset already populates float32 images in (3, 32, 32) [0, 1].
+    return ds
+
+
+def test_record_dataset_episode_video_both_cameras(tmp_path):
+    """Default cameras=(up, side) → stacked frames, non-empty MP4."""
+    ds = _ds_with_video_frames()
+    out = tmp_path / "ep0.mp4"
+    video = record_dataset_episode_video(
+        ds, episode_idx=0, fps=10, save_path=str(out),
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
+    assert getattr(video, "filename", None) == str(out)
+
+
+def test_record_dataset_episode_video_single_camera(tmp_path):
+    """cameras=('up',) → single-camera frames, still writes valid MP4."""
+    ds = _ds_with_video_frames()
+    out = tmp_path / "ep0_up.mp4"
+    record_dataset_episode_video(
+        ds, episode_idx=0, cameras=("up",), fps=10, save_path=str(out),
+    )
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_record_dataset_episode_video_raises_for_missing_episode():
+    ds = _ds_with_video_frames()
+    with pytest.raises(ValueError, match="Episode 99"):
+        record_dataset_episode_video(ds, episode_idx=99)
 
 
 # -------------- plot_episode_lengths --------------
