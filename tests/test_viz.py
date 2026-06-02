@@ -20,7 +20,11 @@ from ch02.viz import (  # noqa: E402
     JOINT_NAMES,
     collect_actions,
     plot_action_distributions,
+    plot_episode_lengths,
     plot_joint_trajectories,
+    plot_normalization_effect,
+    plot_stats,
+    render_env_filmstrip,
     render_keyframes,
 )
 
@@ -194,3 +198,123 @@ def test_plot_action_distributions_save_path_writes_file(tmp_path):
     )
     assert out.exists()
     assert out.stat().st_size > 0
+
+
+# -------------- render_env_filmstrip --------------
+
+class _FilmstripFakeEnv:
+    """Minimal env: reset/step/render/action_space for filmstrip tests."""
+
+    class _Space:
+        shape = (6,)
+
+        def sample(self):
+            return np.zeros(6, dtype=np.float32)
+
+    def __init__(self):
+        self.action_space = self._Space()
+        self._step = 0
+
+    def reset(self, seed=0):
+        self._step = 0
+        return {}, {}
+
+    def step(self, action):
+        self._step += 1
+        return {}, 0.0, False, False, {}
+
+    def render(self):
+        # Simple per-step gradient so frames are distinguishable.
+        img = np.full((16, 16, 3), self._step, dtype=np.uint8)
+        return img
+
+
+def test_render_env_filmstrip_returns_figure_with_n_frames():
+    env = _FilmstripFakeEnv()
+    fig = render_env_filmstrip(env, n_steps=20, n_frames=4)
+    assert isinstance(fig, matplotlib.figure.Figure)
+    assert len(fig.axes) == 4
+    plt.close(fig)
+
+
+def test_render_env_filmstrip_save_path_writes_file(tmp_path):
+    env = _FilmstripFakeEnv()
+    out = tmp_path / "filmstrip.png"
+    render_env_filmstrip(env, n_steps=10, n_frames=3, save_path=str(out))
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+# -------------- plot_episode_lengths --------------
+
+def test_plot_episode_lengths_fallback_path():
+    """No meta.episode_data_index → scans episode_index."""
+    ds = FakeDataset([0, 0, 0, 1, 1, 2])
+    fig = plot_episode_lengths(ds)
+    assert isinstance(fig, matplotlib.figure.Figure)
+    # Title should reflect 3 episodes.
+    assert "3 episodes" in fig.axes[0].get_title()
+    plt.close(fig)
+
+
+def test_plot_episode_lengths_fast_path_uses_episode_data_index():
+    """With meta.episode_data_index present, scans cumulative offsets."""
+    ds = FakeDataset([0] * 10)  # ignored by fast path
+
+    class _Meta:
+        episode_data_index = {
+            "from": np.array([0, 5, 12]),
+            "to": np.array([5, 12, 30]),
+        }
+    ds.meta = _Meta()
+    fig = plot_episode_lengths(ds)
+    # Heights = [5, 7, 18]; fast path avoided per-frame decode.
+    bars = [p.get_height() for p in fig.axes[0].patches]
+    assert bars == [5, 7, 18]
+    plt.close(fig)
+
+
+# -------------- plot_stats --------------
+
+def test_plot_stats_renders_per_dim_bars():
+    stats = {
+        "action": {
+            "mean": np.array([0.1, -0.2, 0.3, 0.0, 0.05, -0.1]),
+            "std": np.array([0.5, 0.4, 0.6, 0.3, 0.2, 0.1]),
+            "min": np.zeros(6),
+            "max": np.ones(6),
+        },
+    }
+    fig = plot_stats(stats, key="action")
+    assert isinstance(fig, matplotlib.figure.Figure)
+    bars = fig.axes[0].patches
+    assert len(bars) == 6
+    plt.close(fig)
+
+
+# -------------- plot_normalization_effect --------------
+
+def test_plot_normalization_effect_two_panel_figure():
+    raw = np.random.uniform(-100, 100, 500).astype(np.float32)
+    normalized = (raw - raw.mean()) / (raw.std() + 1e-8)
+    fig = plot_normalization_effect(
+        raw, normalized, dim_name="shoulder_pan",
+    )
+    assert isinstance(fig, matplotlib.figure.Figure)
+    assert len(fig.axes) == 2  # raw + normalized panels
+    plt.close(fig)
+
+
+# -------------- plot_phase_keyframes --------------
+
+def test_plot_phase_keyframes_renders_six_targets():
+    """Capture-mock + 3-D scatter; runs run_scripted_episode internally."""
+    sapien = pytest.importorskip("sapien")
+    from ch02.viz import plot_phase_keyframes  # lazy via __getattr__
+
+    grasp = sapien.Pose([0.2, 0.0, 0.05])
+    goal = np.array([-0.2, 0.2, 0.02])
+    fig = plot_phase_keyframes(grasp, goal)
+    assert isinstance(fig, matplotlib.figure.Figure)
+    # 6 connected move targets + 1 goal scatter = at least 6 plotted points.
+    plt.close(fig)

@@ -51,14 +51,15 @@ def episode_frames(
 
     Returns:
         Frames where `frame["episode_index"] == episode_idx`, ordered by
-        `frame_index`. Each frame is a dict with these keys:
+        `frame_index`. Each frame is a dict with these keys (ground-truthed
+        against `lerobot/svla_so101_pickplace` on lerobot 0.5.1):
             observation.state: torch.float32 (6,) — joint positions
-            observation.images.up: torch.uint8 (3, H, W) — top camera
-            observation.images.side: torch.uint8 (3, H, W) — side camera
+            observation.images.up: torch.float32 (3, 480, 640), [0, 1]
+            observation.images.side: torch.float32 (3, 480, 640), [0, 1]
             action: torch.float32 (6,) — recorded teleop command
-            episode_index, frame_index: int64 scalars
+            episode_index, frame_index, index, task_index: int64 scalars
             timestamp: float32 — seconds from episode start
-            next.done: bool — terminal-step flag
+            task: str — natural-language task description
     """
     out: list[dict] = []
     for i in range(len(dataset)):

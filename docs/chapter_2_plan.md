@@ -103,6 +103,7 @@ Listing 2.1 installs the simulation libraries and constructs a `PickCubeSO100-v1
 # pip install lerobot mani-skill
 import gymnasium as gym                          #A
 import mani_skill.envs                           #B
+import matplotlib.pyplot as plt
 
 env = gym.make(                                  #C
     "PickCubeSO100-v1",
@@ -113,6 +114,9 @@ env = gym.make(                                  #C
 obs, info = env.reset(seed=42)                   #F
 print(f"Observation keys: {list(obs.keys())}")
 print(f"Action space: {env.action_space}")      #G
+
+frame = env.render()[0].cpu().numpy()            #H
+plt.imshow(frame); plt.axis("off"); plt.show()
 ```
 - #A Provides the standard `reset` / `step` interface used by every env in this book — sim, real-hardware wrapper, or benchmark
 - #B Importing `mani_skill.envs` registers `PickCubeSO100-v1` and the rest of the SO-100 task family
@@ -121,6 +125,7 @@ print(f"Action space: {env.action_space}")      #G
 - #E Joint-space delta actions in the same format the SO-100 hardware expects
 - #F Reset returns the initial observation dictionary and an info dict
 - #G Action is `Box(6,)` — one delta per SO-100 joint, gripper included as joint 6
+- #H `env.render()` returns `(num_envs, H, W, 3)`; `[0]` drops the leading vector-env dim, `.cpu().numpy()` makes it matplotlib-friendly. The reader sees the arm, the cube, and the target zone in the same view their later policies will get
 
 **Expected output:**
 ```
@@ -136,6 +141,7 @@ The `run_random_agent` function in listing 2.2 executes the Gymnasium interactio
 **Listing 2.2: Running a random agent on PickCubeSO100-v1**
 ```python
 import numpy as np
+from ch02.viz import render_env_filmstrip
 
 def run_random_agent(env, n_episodes=10):
     successes, returns = 0, []
@@ -155,10 +161,13 @@ def run_random_agent(env, n_episodes=10):
 success_rate, mean_return = run_random_agent(env)
 print(f"Random agent: success={success_rate:.0%} "
       f"return={mean_return:.2f}")                       #C
+
+render_env_filmstrip(env, n_steps=80, n_frames=6, seed=0) #D
 ```
 - #A Sample uniformly from the 6-DOF continuous action space
 - #B Tally a success if the env's terminal info reports the cube landed in the target zone
 - #C Expect near-zero success — flailing the arm rarely grasps anything
+- #D Replay one rollout from a fixed seed and tile 6 evenly-spaced render frames. Reading the filmstrip makes "random actions" concrete — the arm jitters across the workspace, the cube rarely moves
 
 **Expected output:**
 ```
@@ -244,6 +253,7 @@ Listing 2.3 defines `run_scripted_episode`, the seven-phase controller expressed
 ```python
 import numpy as np
 import sapien
+from ch02.viz import plot_phase_keyframes
 
 def run_scripted_episode(
         planner, grasp_pose, goal_pos):
@@ -268,11 +278,16 @@ def run_scripted_episode(
     planner.move_to_pose_with_screw(
         sapien.Pose(goal + np.array([0, 0, 0.02]), quat))
     planner.open_gripper()                          #D
+
+sample_grasp = sapien.Pose([0.0, 0.0, 0.05])        #E
+sample_goal = np.array([-0.2, 0.2, 0.02])
+plot_phase_keyframes(sample_grasp, sample_goal)
 ```
 - #A Three target poses at decreasing Z above the grasp point (approach, descend, grasp). The planner solves IK and follows the joint trajectory for each
 - #B Partial close (`gripper_state=-0.8`) applies contact pressure on the cube without overclosing
 - #C Transport and place keep the grasp orientation. The cube travels parallel to its grasp axis
 - #D Open at the goal to release the cube
+- #E The function defines the policy but doesn't execute it. Plot the six motion-planner targets in 3-D for a sample `(grasp_pose, goal_pos)` so the reader can see the keyframe trajectory the planner will follow (approach high → descend → grasp → lift → transport → place)
 
 Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` constructs the motion planner once per episode, computes a top-down grasp pose from the cube's spawn position, runs the seven phases, and tallies success from the env's `evaluate()`. Reported success rates climb well above zero but plateau below expert teleoperation, motivating the data-driven approach.
 
@@ -327,7 +342,7 @@ Scripted agent success rate: 50%
 
 ### 2.3.3 Understanding delta_timestamps
 - LeRobot's `delta_timestamps` mechanism: request observation/action at relative time offsets from the current frame.
-- Example: `delta_timestamps = {"observation.state": [-0.1, 0.0], "action": [0.0, 0.04, 0.08]}` returns the previous and current observations plus the current and two future actions.
+- Example: `delta_timestamps = {"observation.state": [-0.1, 0.0], "action": [0.0, 0.033, 0.067]}` returns the previous and current observations plus the current and two future actions (offsets in seconds; 0.033 ≈ one frame at the dataset's 30 fps control rate).
 - This is the mechanism for **action chunking** — predicting multiple future actions from a single observation, which is essential for high-frequency, smooth control in later chapters.
 
 ### 2.3.4 Episode Structure
@@ -356,11 +371,11 @@ print(f"Features: {list(dataset.features.keys())}") #C
 ```
 Total frames: 11939
 Episodes: 50
-Features: ['observation.state', 'observation.images.up',
-           'observation.images.side', 'action', 'episode_index',
-           'frame_index', 'timestamp']
+Features: ['action', 'observation.state', 'observation.images.up',
+           'observation.images.side', 'timestamp', 'frame_index',
+           'episode_index', 'index', 'task_index']
 ```
-*Counts and feature names match the v3.0 codebase version of `svla_so101_pickplace`. If the dataset is republished under a different revision, both may shift.*
+*Counts and feature names match the v3.0 codebase version of `svla_so101_pickplace` (verified against `lerobot==0.5.1`; 30 fps; `task` is added by `__getitem__` but not part of `features.keys()`). If the dataset is republished under a different revision, both may shift.*
 
 Listing 2.6 indexes into the dataset to inspect a single frame's shape and dtype, then collects every frame belonging to episode zero to confirm episode-length variation. This concretizes the abstract feature schema for the reader.
 
@@ -382,18 +397,18 @@ print(f"\nEpisode 0 length: {len(ep_indices)} steps")
 
 **Expected output:**
 ```
-  observation.images.up: shape=(3, 480, 640), dtype=torch.float32
-  observation.images.side: shape=(3, 480, 640), dtype=torch.float32
-  action: shape=(6,), dtype=torch.float32
-  observation.state: shape=(6,), dtype=torch.float32
-  timestamp: shape=(), dtype=torch.float32
-  frame_index: shape=(), dtype=torch.int64
-  episode_index: shape=(), dtype=torch.int64
-  index: shape=(), dtype=torch.int64
-  task_index: shape=(), dtype=torch.int64
+  observation.images.up: shape=torch.Size([3, 480, 640]), dtype=torch.float32
+  observation.images.side: shape=torch.Size([3, 480, 640]), dtype=torch.float32
+  action: shape=torch.Size([6]), dtype=torch.float32
+  observation.state: shape=torch.Size([6]), dtype=torch.float32
+  timestamp: shape=torch.Size([]), dtype=torch.float32
+  frame_index: shape=torch.Size([]), dtype=torch.int64
+  episode_index: shape=torch.Size([]), dtype=torch.int64
+  index: shape=torch.Size([]), dtype=torch.int64
+  task_index: shape=torch.Size([]), dtype=torch.int64
   task: pink lego brick into the transparent box
 
-Episode 0 length: 238 steps
+Episode 0 length: 303 steps
 ```
 *Image channel-first ordering (C, H, W) is the LeRobot convention; matplotlib needs the transpose. Images come back as `float32` in `[0, 1]` — LeRobot 0.5.x normalizes on read. The `task` field carries the natural-language goal for the demo, set up for the language-conditioned policies in later chapters.*
 
@@ -414,7 +429,7 @@ Episode 0 length: 238 steps
 
 **Callout Box: "WHAT IS delta_timestamps?"**
 - LeRobot's mechanism for requesting data at relative time offsets from a given frame.
-- Setting `delta_timestamps={"action": [0.0, 0.04, 0.08]}` returns the current action plus the next two future actions, stacked into shape `(3, 6)`.
+- Setting `delta_timestamps={"action": [0.0, 0.033, 0.067]}` returns the current action plus the next two future actions, stacked into shape `(3, 6)` (offsets in seconds at the dataset's 30 fps rate).
 - This enables **action chunking** — predicting a short sequence of future actions instead of one at a time.
 - Action chunking improves policy smoothness and is the foundation for the ACT and diffusion-policy heads in Chapters 4 and 5.
 
