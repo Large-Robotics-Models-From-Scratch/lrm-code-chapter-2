@@ -141,12 +141,25 @@ def plot_action_distributions(
     random_: np.ndarray,
     save_path: str | None = None,
     joint_names: list[str] | None = None,
+    normalize_per_source: bool = True,
 ) -> matplotlib.figure.Figure:
     """Overlay per-dimension histograms of expert / scripted / random.
 
-    ``scripted=None`` skips that source. Useful when the scripted
-    policy can't be run (no Vulkan, planner segfault) but expert and
-    random comparison is still wanted.
+    The three sources live in different units — expert actions are
+    degrees of joint position (LeRobot teleop convention, ~[-100, +100]),
+    scripted actions are radians (`pd_joint_pos`, ~[-π, +π]), and random
+    actions are normalized deltas (`pd_joint_delta_pos`, [-1, +1]). When
+    `normalize_per_source=True` (the default) each source is min-max
+    rescaled into [-1, +1] *independently* before plotting so the
+    distribution *shapes* are visible on a common axis without pretending
+    the absolute values are comparable.
+
+    Pass `normalize_per_source=False` to plot raw values — useful only
+    when you've already converted every source to the same unit.
+
+    ``scripted=None`` skips that source. Useful when the scripted policy
+    can't be run (no Vulkan, planner segfault) but expert and random
+    comparison is still wanted.
     """
     names = joint_names or JOINT_NAMES
     n = len(names)
@@ -156,15 +169,37 @@ def plot_action_distributions(
     sources = [("expert", expert), ("random", random_)]
     if scripted is not None:
         sources.insert(1, ("scripted", scripted))
+
+    def _rescale(arr: np.ndarray) -> np.ndarray:
+        """Per-source, per-joint min-max → [-1, +1]; preserves shape."""
+        if not normalize_per_source:
+            return arr
+        lo = arr.min(axis=0, keepdims=True)
+        hi = arr.max(axis=0, keepdims=True)
+        span = np.where(hi - lo > 1e-9, hi - lo, 1.0)
+        return 2.0 * (arr - lo) / span - 1.0
+
+    rescaled = [(label, _rescale(arr)) for label, arr in sources]
+    xlabel = (
+        "normalized action (per-source min-max → [-1, +1])"
+        if normalize_per_source
+        else "action value (raw units)"
+    )
+
     for j, name in enumerate(names):
         ax = axes.flat[j]
-        for label, arr in sources:
+        for label, arr in rescaled:
             ax.hist(
                 arr[:, j], bins=40, alpha=0.5,
                 label=label, density=True,
             )
         ax.set_title(name, fontsize=10)
+        ax.set_xlabel(xlabel, fontsize=8)
+        ax.set_ylabel("density", fontsize=8)
         ax.legend(fontsize=8)
+    # Hide any empty cells if n_joints isn't a multiple of cols.
+    for k in range(n, rows * cols):
+        axes.flat[k].set_visible(False)
     plt.tight_layout()
     if save_path is not None:
         fig.savefig(save_path, dpi=300, bbox_inches="tight")
