@@ -501,6 +501,9 @@ def plot_phase_keyframes(
         def open_gripper(self):
             pass
 
+        def hold(self, n_steps=30):
+            pass
+
     cap = _Capture()
     run_scripted_episode(cap, grasp_pose, goal_pos)
     pts = np.asarray(cap.targets)

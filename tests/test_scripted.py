@@ -20,20 +20,23 @@ from ch02.scripted import (  # noqa: E402
 
 
 class MockPlanner:
-    """Records ManiSkill motion-planner calls for assertion."""
+    """Records IKMotionPlanner calls for assertion."""
 
     def __init__(self):
         self.calls: list[tuple] = []
 
     def move_to_pose_with_screw(self, pose):
         self.calls.append(("move_to_pose_with_screw", pose))
-        return "success"
+        return True
 
     def close_gripper(self, gripper_state=None):
         self.calls.append(("close_gripper", gripper_state))
 
     def open_gripper(self):
         self.calls.append(("open_gripper",))
+
+    def hold(self, n_steps=30):
+        self.calls.append(("hold", n_steps))
 
     def close(self):
         self.calls.append(("close",))
@@ -66,7 +69,7 @@ def test_episode_call_sequence():
         "move_to_pose_with_screw",  # 4 lift
         "move_to_pose_with_screw",  # 5 transport
         "move_to_pose_with_screw",  # 6 place
-        "open_gripper",             # 7 release
+        "hold",                     # 7 hold at goal
     ]
     assert [c[0] for c in planner.calls] == expected
 
@@ -89,12 +92,13 @@ def test_close_gripper_uses_partial_state():
     assert close_calls[0][1] == -0.8
 
 
-def test_open_gripper_called_exactly_once():
+def test_no_gripper_release():
+    """Hold-at-goal: scripted policy does not release the cube."""
     planner = MockPlanner()
     grasp_pose, goal_pos = _grasp_and_goal()
     run_scripted_episode(planner, grasp_pose, goal_pos)
     open_calls = [c for c in planner.calls if c[0] == "open_gripper"]
-    assert len(open_calls) == 1
+    assert len(open_calls) == 0
 
 
 def test_close_fires_after_third_move():
@@ -105,11 +109,11 @@ def test_close_fires_after_third_move():
     assert planner.calls[3][0] == "close_gripper"
 
 
-def test_open_fires_last():
+def test_hold_fires_last():
     planner = MockPlanner()
     grasp_pose, goal_pos = _grasp_and_goal()
     run_scripted_episode(planner, grasp_pose, goal_pos)
-    assert planner.calls[-1][0] == "open_gripper"
+    assert planner.calls[-1][0] == "hold"
 
 
 def test_run_scripted_agent_is_callable():
@@ -132,9 +136,9 @@ def test_move_z_offsets_match_phase_intent():
     assert moves[1].p[2] == pytest.approx(grasp_z + 0.03)
     assert moves[2].p[2] == pytest.approx(grasp_z + 0.01)
     assert moves[3].p[2] == pytest.approx(grasp_z + 0.15)
-    # moves 5-6 are goal-relative
-    assert moves[4].p[2] == pytest.approx(goal_pos[2] + 0.15)
-    assert moves[5].p[2] == pytest.approx(goal_pos[2] + 0.02)
+    # moves 5-6 are goal-relative — transport @ +5cm, place at goal.
+    assert moves[4].p[2] == pytest.approx(goal_pos[2] + 0.05)
+    assert moves[5].p[2] == pytest.approx(goal_pos[2])
 
 
 def test_quaternion_preserved_across_goal_moves():

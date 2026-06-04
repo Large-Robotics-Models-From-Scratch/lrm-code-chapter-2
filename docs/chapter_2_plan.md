@@ -247,7 +247,7 @@ Observation keys depend on the env's `obs_mode`. With `obs_mode="state_dict"` (u
 - It is open-loop within each phase — no recovery once the gripper misses
 - Key insight: even a "smart" heuristic plateaus far below expert performance. Learned policies can capture the subtle contact dynamics and recovery behaviors that rules miss.
 
-Listing 2.3 defines `run_scripted_episode`, the seven-phase controller expressed as keyframe poses for ManiSkill's motion planner. Each `move_to_pose_with_screw` call internally solves IK and steps the joint trajectory until the target is reached — the scripted code itself stays declarative.
+Listing 2.3 defines `run_scripted_episode`, the seven-phase controller expressed as keyframe poses for the chapter's IK planner (`IKMotionPlanner` in `ch02.scripted`). Each `move_to_pose_with_screw` call solves SAPIEN's pinocchio IK at evenly spaced Cartesian waypoints between the current and target end-effector poses, clamps the result to joint limits, and feeds the per-waypoint qpos straight to the `pd_joint_pos` controller. The final `hold` lets the arm settle so the env's `is_robot_static` flag flips true. The scripted code itself stays declarative — "here is where the gripper should go next" — and the planner handles IK.
 
 **Listing 2.3: A multi-phase scripted pick-and-place policy**
 ```python
@@ -257,9 +257,9 @@ from ch02.viz import plot_phase_keyframes
 
 def run_scripted_episode(
         planner, grasp_pose, goal_pos):
-    """Seven phases via the motion planner.
+    """Seven phases via the IK planner.
 
-    approach → descend → grasp → lift → transport → place → release.
+    approach → descend → grasp → lift → transport → place → hold.
     """
     quat = grasp_pose.q
     goal = np.asarray(goal_pos)
@@ -274,10 +274,10 @@ def run_scripted_episode(
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.15]) * grasp_pose)
     planner.move_to_pose_with_screw(                #C
-        sapien.Pose(goal + np.array([0, 0, 0.15]), quat))
+        sapien.Pose(goal + np.array([0, 0, 0.05]), quat))
     planner.move_to_pose_with_screw(
-        sapien.Pose(goal + np.array([0, 0, 0.02]), quat))
-    planner.open_gripper()                          #D
+        sapien.Pose(goal, quat))
+    planner.hold(n_steps=30)                        #D
 
 sample_grasp = sapien.Pose([0.0, 0.0, 0.05])        #E
 sample_goal = np.array([-0.2, 0.2, 0.02])
@@ -285,26 +285,31 @@ plot_phase_keyframes(sample_grasp, sample_goal)
 ```
 - #A Three target poses at decreasing Z above the grasp point (approach, descend, grasp). The planner solves IK and follows the joint trajectory for each
 - #B Partial close (`gripper_state=-0.8`) applies contact pressure on the cube without overclosing
-- #C Transport and place keep the grasp orientation. The cube travels parallel to its grasp axis
-- #D Open at the goal to release the cube
+- #C Transport and place keep the grasp orientation. Transport hovers 5 cm above goal; place sets the cube down at goal. (mplib used 15 cm + 2 cm; our pure-IK path is less reach-efficient, so we tuck the keyframes closer to the workspace.)
+- #D Hold instead of release. The success check only requires `is_obj_placed AND is_robot_static` — dropping the cube from any height bounces it past the 1.56 cm goal threshold, so we keep the gripper closed and let the arm settle
 - #E The function defines the policy but doesn't execute it. Plot the six motion-planner targets in 3-D for a sample `(grasp_pose, goal_pos)` so the reader can see the keyframe trajectory the planner will follow (approach high → descend → grasp → lift → transport → place)
 
-Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` constructs the motion planner once per episode, computes a top-down grasp pose from the cube's spawn position, runs the seven phases, and tallies success from the env's `evaluate()`. Reported success rates climb well above zero but plateau below expert teleoperation, motivating the data-driven approach.
+Listing 2.4 evaluates the scripted policy. The package's `run_scripted_agent` constructs an `IKMotionPlanner` once per episode, computes a top-down grasp pose from the cube's spawn position, runs the seven phases, and tallies success from the env's `evaluate()`. The env must be built with `control_mode="pd_joint_pos"` so the IK qpos targets feed straight to the controller. Reported success rates land in the 20–40% band — well above the random floor but well below expert teleoperation. The chapter's pure-IK planner can't always thread the workspace as cleanly as a sampling-based planner (it has no collision avoidance, no retry-from-elsewhere), and that's the gap learned policies eventually close.
 
 **Listing 2.4: Evaluating the scripted policy**
 ```python
 from ch02.scripted import run_scripted_agent           #A
 from ch02.viz import record_scripted_episode_video
 
-env = make_env(obs_mode="state", render_mode=None)
-rate = run_scripted_agent(env, n_episodes=10)         #B
+env = make_env(
+    obs_mode="state", control_mode="pd_joint_pos", render_mode=None,
+)                                                     #B
+rate = run_scripted_agent(env, n_episodes=10)
 print(f"Scripted agent success rate: {rate:.0%}")
 
-video_env = make_env(obs_mode="state", render_mode="rgb_array") #C
+video_env = make_env(                                 #C
+    obs_mode="state", control_mode="pd_joint_pos",
+    render_mode="rgb_array",
+)
 record_scripted_episode_video(video_env, n_episodes=1, fps=20)
 ```
-- #A Provided utility from `ch02.scripted`. Internally constructs the motion planner, computes the grasp pose per episode, and counts successes
-- #B `state` mode is fine — the scripted policy reads cube and goal positions directly from `env.unwrapped`. It never touches the observation dict
+- #A Provided utility from `ch02.scripted`. Internally constructs the IK planner, computes the grasp pose per episode, and counts successes
+- #B `pd_joint_pos` is required — the IK planner emits per-waypoint absolute joint targets, not deltas. `state` mode is fine since the scripted policy reads cube and goal positions directly from `env.unwrapped`
 - #C Record one scripted rollout as MP4 for inline playback. The helper monkey-patches `env.step` to capture `env.render()` after each physics step — same pattern as `capture_scripted_actions`. A separate `rgb_array`-mode env is needed because the success-rate env above was built with `render_mode=None` for throughput
 
 **Expected output:**
