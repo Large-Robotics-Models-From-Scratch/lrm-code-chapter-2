@@ -35,6 +35,10 @@ class MockPlanner:
     def open_gripper(self):
         self.calls.append(("open_gripper",))
 
+    def converge_to_pose(self, pose, tol=0.003, max_steps=60):
+        self.calls.append(("converge_to_pose", pose))
+        return 0.0
+
     def hold(self, n_steps=30):
         self.calls.append(("hold", n_steps))
 
@@ -69,6 +73,7 @@ def test_episode_call_sequence():
         "move_to_pose_with_screw",  # 4 lift
         "move_to_pose_with_screw",  # 5 transport
         "move_to_pose_with_screw",  # 6 place
+        "converge_to_pose",         #   close the loop on the goal
         "hold",                     # 7 hold at goal
     ]
     assert [c[0] for c in planner.calls] == expected

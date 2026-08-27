@@ -11,22 +11,31 @@ segfaults under numpy 2.x at `ArticulatedModel` construction. SAPIEN's
 pinocchio model ships with the simulator and avoids that dependency
 chain entirely.
 
-The policy plateaus around 10–20% success — the SO-100 arm's reach is
-marginal for some goal positions, and our IK + linear-interpolation
-path can't always thread the workspace as cleanly as a sampling-based
-planner. That gap is the chapter's motivation for learned policies.
+The policy reaches roughly 55% success (25 episodes). The remaining
+failures are the SO-100 arm's marginal reach for outlying goal
+positions: SAPIEN's IK happily returns a pose outside the joint limits,
+and the closest in-limits pose is then several centimetres short. That
+gap — a hand-written policy that cannot adapt when the geometry stops
+cooperating — is the chapter's motivation for learned policies.
 """
 
 import gymnasium as gym
 import numpy as np
 import sapien
+from mani_skill.examples.motionplanning.base_motionplanner.utils import (
+    compute_grasp_info_by_obb,
+    get_actor_obb,
+)
 from transforms3d.euler import euler2quat
+from transforms3d.quaternions import quat2mat
 
 from ch02._metrics import _episode_success
 
 # A few canonical SO-100 joint-space warm starts for IK. CLIK can get
 # trapped near singularities; retrying from a different seed often
 # escapes them.
+FINGER_LENGTH = 0.025
+
 _IK_WARM_STARTS = [
     np.array([0.0, 0.0, 0.0, 1.6, 1.6, 0.0]),
     np.array([0.0, 0.5, -0.5, 1.6, 0.0, 0.0]),
@@ -161,6 +170,99 @@ class IKMotionPlanner:
         )
         return qp, float(np.linalg.norm(err))
 
+    def _solve_ik_within_limits(
+        self,
+        target_base: sapien.Pose,
+        warm_start: np.ndarray,
+        iters: int = 150,
+        damp: float = 1e-3,
+        rot_weight: float = 0.05,
+        step_cap: float = 0.10,
+    ) -> tuple[np.ndarray, float]:
+        """Damped least-squares IK that never leaves the joint limits.
+
+        SAPIEN's CLIK ignores joint limits, so its answer is often a pose
+        the arm cannot strike; clamping it afterwards silently lands the
+        tip centimetres away while the reported residual still looks
+        perfect. Here the clamp is applied inside the loop, so the solve
+        converges to the closest *reachable* pose instead.
+
+        Orientation is down-weighted because placing the cube only needs
+        position, and a 5-DOF arm cannot honour both everywhere.
+
+        Returns:
+            `(qpos, position_error_m)`.
+        """
+        q = np.asarray(warm_start, float).copy()
+        q = np.clip(q, self.q_low, self.q_high)
+        tgt_p = np.asarray(target_base.p)
+        tgt_R = quat2mat(np.asarray(target_base.q))
+        best = (np.inf, q.copy())
+        for _ in range(iters):
+            self.pino.compute_forward_kinematics(q)
+            cur = self.pino.get_link_pose(self.tip_link_idx)
+            e_p = tgt_p - np.asarray(cur.p)
+            dR = tgt_R @ quat2mat(np.asarray(cur.q)).T
+            ang = np.arccos(np.clip((np.trace(dR) - 1) / 2, -1, 1))
+            e_r = (
+                np.zeros(3)
+                if ang < 1e-9
+                else ang / (2 * np.sin(ang)) * np.array([
+                    dR[2, 1] - dR[1, 2],
+                    dR[0, 2] - dR[2, 0],
+                    dR[1, 0] - dR[0, 1],
+                ])
+            )
+            pos_err = float(np.linalg.norm(e_p))
+            if pos_err < best[0]:
+                best = (pos_err, q.copy())
+            if pos_err < 1e-4 and float(np.linalg.norm(e_r)) < 1e-3:
+                break
+            self.pino.compute_full_jacobian(q)
+            J = np.asarray(
+                self.pino.get_link_jacobian(self.tip_link_idx, local=False)
+            )
+            Jw = np.vstack([J[:3], rot_weight * J[3:]])
+            err = np.concatenate([e_p, rot_weight * e_r])
+            dq = Jw.T @ np.linalg.solve(Jw @ Jw.T + damp * np.eye(6), err)
+            n = np.linalg.norm(dq)
+            if n > step_cap:
+                dq *= step_cap / n
+            q = np.clip(q + dq, self.q_low, self.q_high)
+        return best[1], best[0]
+
+    def converge_to_pose(
+        self,
+        target_tcp_pose: sapien.Pose,
+        tol: float = 0.003,
+        max_steps: int = 60,
+    ) -> float:
+        """Close the loop on `target_tcp_pose` until actually within `tol`.
+
+        `move_to_pose_with_screw` is open loop: it plays its waypoints and
+        assumes the arm arrived, which it typically has not. Here each step
+        re-solves IK from the *measured* qpos, so residual error is fed back
+        rather than ignored.
+
+        Returns:
+            Final tip-to-target distance in metres.
+        """
+        base_inv = self.robot.pose.inv()
+        err = float("inf")
+        for _ in range(max_steps):
+            tip_target = self._tcp_to_tip_world(target_tcp_pose)
+            err = float(np.linalg.norm(
+                np.asarray(self._current_tip_pose_world().p)
+                - np.asarray(tip_target.p)
+            ))
+            if err < tol:
+                break
+            qpos, _ = self._solve_ik_within_limits(
+                base_inv * tip_target, self._current_qpos()
+            )
+            self._step_with_qpos(qpos)
+        return err
+
     def move_to_pose_with_screw(self, target_tcp_pose: sapien.Pose) -> bool:
         """Cartesian waypoint interpolation + per-waypoint IK.
 
@@ -211,28 +313,31 @@ class IKMotionPlanner:
             warm = clamped.copy()
         return True
 
+    def _hold_pose(self, n_steps: int) -> None:
+        """Re-send one latched arm target for `n_steps`.
+
+        The target is read once, not per step. Re-reading it would feed the
+        arm's own tracking error back as the new command, so any sag gets
+        latched in and compounds — the arm droops further each step instead
+        of being pulled back.
+        """
+        qpos = self._current_qpos()
+        for _ in range(n_steps):
+            self._step_with_qpos(qpos)
+
     def close_gripper(self, gripper_state: float = -0.8) -> None:
         """Close the gripper; step a few times so the contact settles."""
         self.gripper_state = gripper_state
-        qpos = self._current_qpos()
-        for _ in range(self.settle_steps):
-            self._step_with_qpos(qpos)
-            qpos = self._current_qpos()
+        self._hold_pose(self.settle_steps)
 
     def open_gripper(self) -> None:
         """Open the gripper; step a few times so the release settles."""
         self.gripper_state = self.OPEN
-        qpos = self._current_qpos()
-        for _ in range(self.settle_steps):
-            self._step_with_qpos(qpos)
-            qpos = self._current_qpos()
+        self._hold_pose(self.settle_steps)
 
     def hold(self, n_steps: int = 30) -> None:
         """Hold the current pose so `is_robot_static` flips true."""
-        qpos = self._current_qpos()
-        for _ in range(n_steps):
-            self._step_with_qpos(qpos)
-            qpos = self._current_qpos()
+        self._hold_pose(n_steps)
 
 
 def run_scripted_episode(
@@ -281,10 +386,13 @@ def run_scripted_episode(
     planner.move_to_pose_with_screw(
         sapien.Pose(goal + np.array([0, 0, 0.05]), quat)
     )
-    # 6. place (at goal, gripper still closed).
+    # 6. place (at goal, gripper still closed), then close the loop on it:
+    #    the waypoint pass alone lands tens of mm out, which is well outside
+    #    the goal threshold.
     planner.move_to_pose_with_screw(
         sapien.Pose(goal, quat)
     )
+    planner.converge_to_pose(sapien.Pose(goal, quat))
     # 7. hold — settle so `is_robot_static` flips true.
     planner.hold(n_steps=30)
 
@@ -301,12 +409,23 @@ def _compute_top_down_grasp_pose(env: gym.Env) -> sapien.Pose:
     """
     unwrapped = env.unwrapped
     cube_pos = unwrapped.cube.pose.sp.p
-    # NOTE: closing=[1, 0, 0] assumes an axis-aligned cube; PickCubeSO100-v1
-    # spawns this way. For arbitrary cube yaw, derive from the OBB (see
-    # ManiSkill `motionplanning/so100/solutions/pick_cube.py`).
+    # Derive the closing axis from the wrist's current orientation and the
+    # cube's oriented bounding box, as ManiSkill's own SO-100 solution does
+    # (motionplanning/so100/solutions/pick_cube.py). A hardcoded axis only
+    # works on an axis-aligned cube, and PickCubeSO100-v1 randomizes the
+    # cube's z-rotation, so the jaws miss the faces on most episodes.
+    approaching = np.array([0, 0, -1])
+    wrist_flip = sapien.Pose(q=euler2quat(np.pi / 2, 0, 0))
+    tcp_frame = wrist_flip * unwrapped.agent.tcp_pose.sp
+    grasp_info = compute_grasp_info_by_obb(
+        get_actor_obb(unwrapped.cube),
+        approaching=approaching,
+        target_closing=tcp_frame.to_transformation_matrix()[:3, 1],
+        depth=FINGER_LENGTH,
+    )
     base = unwrapped.agent.build_grasp_pose(
-        approaching=np.array([0, 0, -1]),
-        closing=np.array([1, 0, 0]),
+        approaching=approaching,
+        closing=grasp_info["closing"],
         center=cube_pos,
     )
     # SO-100's gripper frame needs this rotation so the closing axis

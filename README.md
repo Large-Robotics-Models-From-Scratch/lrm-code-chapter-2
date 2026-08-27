@@ -84,7 +84,7 @@ We recommend [**uv**](https://docs.astral.sh/uv/) — significantly faster than 
    uv sync --extra data --extra sim
    ```
 
-   This reads `pyproject.toml`, creates `.venv/`, and installs the chapter package along with the `[data]` extra (`lerobot==0.5.1`) and `[sim]` extra (`mani-skill==3.0.1`). Expect ~4 GB on disk and 2–5 minutes the first time.
+   This reads `pyproject.toml`, creates `.venv/`, and installs the chapter package along with the `[data]` extra (`lerobot==0.5.1`) and `[sim]` extra (ManiSkill, pinned to our fork — it adds the SO-101 arm and `PickCubeSO101-v1`, which upstream does not ship). Expect ~4 GB on disk and 2–5 minutes the first time.
 
 3. Launch JupyterLab:
 
