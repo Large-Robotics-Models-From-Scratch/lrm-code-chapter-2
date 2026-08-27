@@ -33,6 +33,12 @@ sim = [
 data = [
     "lerobot==0.5.1",
 ]
+# Vision-language-action policies. `lerobot[smolvla]` pulls transformers
+# and the SmolVLM backbone, which the [data] extra alone does not. Needed
+# only to run ch02.vla_rollout, not for the dataset or pipeline listings.
+vla = [
+    "lerobot[smolvla]==0.5.1",
+]
 # Developer tooling.
 dev = [
     "pytest>=7.4",
