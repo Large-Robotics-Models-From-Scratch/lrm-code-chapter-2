@@ -36,6 +36,44 @@ from ch02._metrics import _episode_success
 # escapes them.
 FINGER_LENGTH = 0.025
 
+# Per-robot constants. Everything else in this file is shared: the phase
+# sequence, the IK, and the planner are identical for both arms.
+ROBOT_PROFILES = {
+    "so100": dict(
+        tip_link="Fixed_Jaw_tip",
+        gripper_open=0.0,
+        gripper_ready=0.0,          # jaws already narrow enough to descend
+        gripper_closed=-0.8,
+        grasp_correction=(-np.pi / 2, 0, np.pi / 2),
+        grasp_z=0.01,
+        closing_mode="obb",
+    ),
+    "so101": dict(
+        tip_link="gripper_frame_link",
+        # This gripper runs closed -> open, the opposite sense to the so100.
+        gripper_open=1.7453,
+        gripper_ready=0.32,         # ~41mm, just wider than the 25mm cube
+        gripper_closed=-0.02,
+        grasp_correction=(0, 0, np.pi / 2),
+        grasp_z=0.0,                # TCP is the jaw midpoint: cube centre
+        closing_mode="radial_perp",
+    ),
+}
+
+
+def robot_profile(env: gym.Env) -> dict:
+    """Look up the constants for whichever arm `env` is using."""
+    uid = getattr(env.unwrapped, "robot_uids", "so100")
+    if not isinstance(uid, str):
+        uid = uid[0]
+    if uid not in ROBOT_PROFILES:
+        raise ValueError(
+            f"no scripted-policy profile for robot {uid!r}; "
+            f"known: {sorted(ROBOT_PROFILES)}"
+        )
+    return ROBOT_PROFILES[uid]
+
+
 _IK_WARM_STARTS = [
     np.array([0.0, 0.0, 0.0, 1.6, 1.6, 0.0]),
     np.array([0.0, 0.5, -0.5, 1.6, 0.0, 0.0]),
@@ -70,9 +108,6 @@ class IKMotionPlanner:
     Requires the env to be constructed with `control_mode="pd_joint_pos"`.
     """
 
-    OPEN = 0.0
-    CLOSED = -0.8
-    TIP_LINK_NAME = "Fixed_Jaw_tip"
     GRIPPER_JOINT_IDX = 5
     IK_ACCEPT_TOL = 0.10  # 10cm; skip waypoints whose IK diverges further
 
@@ -84,6 +119,11 @@ class IKMotionPlanner:
         settle_steps: int = 10,
     ):
         self.env = env
+        self.profile = robot_profile(env)
+        self.TIP_LINK_NAME = self.profile["tip_link"]
+        self.OPEN = self.profile["gripper_open"]
+        self.READY = self.profile["gripper_ready"]
+        self.CLOSED = self.profile["gripper_closed"]
         self.unwrapped = env.unwrapped
         self.agent = self.unwrapped.agent
         self.robot_wrap = self.agent.robot
@@ -325,14 +365,25 @@ class IKMotionPlanner:
         for _ in range(n_steps):
             self._step_with_qpos(qpos)
 
-    def close_gripper(self, gripper_state: float = -0.8) -> None:
+    def close_gripper(self, gripper_state: float | None = None) -> None:
         """Close the gripper; step a few times so the contact settles."""
-        self.gripper_state = gripper_state
+        self.gripper_state = (
+            self.CLOSED if gripper_state is None else gripper_state
+        )
         self._hold_pose(self.settle_steps)
 
     def open_gripper(self) -> None:
         """Open the gripper; step a few times so the release settles."""
         self.gripper_state = self.OPEN
+        self._hold_pose(self.settle_steps)
+
+    def ready_gripper(self) -> None:
+        """Narrow the jaws to just wider than the cube before descending.
+
+        Descending with the jaws at full span and only then closing sweeps
+        them through the cube and bats it away.
+        """
+        self.gripper_state = self.READY
         self._hold_pose(self.settle_steps)
 
     def hold(self, n_steps: int = 30) -> None:
@@ -368,15 +419,17 @@ def run_scripted_episode(
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.10]) * grasp_pose
     )
+    planner.ready_gripper()
     # 2. descend (3cm above)
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.03]) * grasp_pose
     )
-    # 3. at-cube (1cm above)
+    # 3. at-cube (grasp height is per-robot: the so101's TCP is the jaw
+    #    midpoint, so it sits at the cube's centre rather than above it)
     planner.move_to_pose_with_screw(
-        sapien.Pose([0, 0, 0.01]) * grasp_pose
+        sapien.Pose([0, 0, planner.profile["grasp_z"]]) * grasp_pose
     )
-    planner.close_gripper(gripper_state=-0.8)
+    planner.close_gripper()
     # 4. lift (15cm above grasp)
     planner.move_to_pose_with_screw(
         sapien.Pose([0, 0, 0.15]) * grasp_pose
@@ -408,31 +461,38 @@ def _compute_top_down_grasp_pose(env: gym.Env) -> sapien.Pose:
         closing axis aligns with the cube faces).
     """
     unwrapped = env.unwrapped
-    cube_pos = unwrapped.cube.pose.sp.p
-    # Derive the closing axis from the wrist's current orientation and the
-    # cube's oriented bounding box, as ManiSkill's own SO-100 solution does
-    # (motionplanning/so100/solutions/pick_cube.py). A hardcoded axis only
-    # works on an axis-aligned cube, and PickCubeSO100-v1 randomizes the
-    # cube's z-rotation, so the jaws miss the faces on most episodes.
+    profile = robot_profile(env)
+    cube_pos = np.asarray(unwrapped.cube.pose.sp.p)
     approaching = np.array([0, 0, -1])
-    wrist_flip = sapien.Pose(q=euler2quat(np.pi / 2, 0, 0))
-    tcp_frame = wrist_flip * unwrapped.agent.tcp_pose.sp
-    grasp_info = compute_grasp_info_by_obb(
-        get_actor_obb(unwrapped.cube),
-        approaching=approaching,
-        target_closing=tcp_frame.to_transformation_matrix()[:3, 1],
-        depth=FINGER_LENGTH,
+
+    if profile["closing_mode"] == "radial_perp":
+        # A 5-DOF arm reaches a target with the wrist azimuth its own
+        # geometry dictates. Asking for any other azimuth sends wrist_roll
+        # sweeping into its limit, which the controller cannot track, so
+        # take the axis perpendicular to the base->cube direction.
+        base = np.asarray(unwrapped.agent.robot.pose.sp.p)
+        az = np.arctan2(cube_pos[1] - base[1], cube_pos[0] - base[0])
+        closing = np.array([-np.sin(az), np.cos(az), 0.0])
+    else:
+        # Derive the closing axis from the wrist's current orientation and
+        # the cube's oriented bounding box, as ManiSkill's own SO-100
+        # solution does. A hardcoded axis only works on an axis-aligned
+        # cube, and PickCube randomizes the cube's z-rotation.
+        wrist_flip = sapien.Pose(q=euler2quat(np.pi / 2, 0, 0))
+        tcp_frame = wrist_flip * unwrapped.agent.tcp_pose.sp
+        closing = compute_grasp_info_by_obb(
+            get_actor_obb(unwrapped.cube),
+            approaching=approaching,
+            target_closing=tcp_frame.to_transformation_matrix()[:3, 1],
+            depth=FINGER_LENGTH,
+        )["closing"]
+
+    base_pose = unwrapped.agent.build_grasp_pose(
+        approaching=approaching, closing=closing, center=cube_pos
     )
-    base = unwrapped.agent.build_grasp_pose(
-        approaching=approaching,
-        closing=grasp_info["closing"],
-        center=cube_pos,
-    )
-    # SO-100's gripper frame needs this rotation so the closing axis
-    # lines up with the cube faces. Matches upstream verbatim:
-    # mani_skill/examples/motionplanning/so100/solutions/pick_cube.py:44
-    return base * sapien.Pose(
-        q=euler2quat(-np.pi / 2, 0, np.pi / 2)
+    # Rotate into the gripper's own frame convention.
+    return base_pose * sapien.Pose(
+        q=euler2quat(*profile["grasp_correction"])
     )
 
 

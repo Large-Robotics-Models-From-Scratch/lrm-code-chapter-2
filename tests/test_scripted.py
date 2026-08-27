@@ -22,6 +22,9 @@ from ch02.scripted import (  # noqa: E402
 class MockPlanner:
     """Records IKMotionPlanner calls for assertion."""
 
+    # run_scripted_episode reads grasp_z off the planner's profile
+    profile = {"grasp_z": 0.01}
+
     def __init__(self):
         self.calls: list[tuple] = []
 
@@ -34,6 +37,9 @@ class MockPlanner:
 
     def open_gripper(self):
         self.calls.append(("open_gripper",))
+
+    def ready_gripper(self):
+        self.calls.append(("ready_gripper",))
 
     def converge_to_pose(self, pose, tol=0.003, max_steps=60):
         self.calls.append(("converge_to_pose", pose))
@@ -67,6 +73,7 @@ def test_episode_call_sequence():
 
     expected = [
         "move_to_pose_with_screw",  # 1 approach
+        "ready_gripper",            #   narrow jaws before descending
         "move_to_pose_with_screw",  # 2 descend
         "move_to_pose_with_screw",  # 3 grasp pose
         "close_gripper",            # close
@@ -87,14 +94,18 @@ def test_episode_uses_six_move_calls():
     assert len(moves) == 6
 
 
-def test_close_gripper_uses_partial_state():
-    """Partial close (-0.8) applies contact pressure without overclosing."""
+def test_close_gripper_defers_to_the_robot_profile():
+    """Closed value comes from the arm's profile, not the episode.
+
+    The two arms close in opposite directions, so the episode must not
+    hardcode one of them.
+    """
     planner = MockPlanner()
     grasp_pose, goal_pos = _grasp_and_goal()
     run_scripted_episode(planner, grasp_pose, goal_pos)
     close_calls = [c for c in planner.calls if c[0] == "close_gripper"]
     assert len(close_calls) == 1
-    assert close_calls[0][1] == -0.8
+    assert close_calls[0][1] is None
 
 
 def test_no_gripper_release():
@@ -107,11 +118,11 @@ def test_no_gripper_release():
 
 
 def test_close_fires_after_third_move():
-    """Grasp = approach + descend + grasp-pose then close."""
+    """approach, narrow, descend, grasp-pose, then close."""
     planner = MockPlanner()
     grasp_pose, goal_pos = _grasp_and_goal()
     run_scripted_episode(planner, grasp_pose, goal_pos)
-    assert planner.calls[3][0] == "close_gripper"
+    assert planner.calls[4][0] == "close_gripper"
 
 
 def test_hold_fires_last():
