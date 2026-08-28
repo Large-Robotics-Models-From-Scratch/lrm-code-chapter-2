@@ -523,6 +523,14 @@ def plot_phase_keyframes(
     from ch02.scripted import run_scripted_episode
 
     class _Capture:
+        """Stand-in planner: records the keyframe targets, moves nothing.
+
+        Mirrors IKMotionPlanner's interface, including the `profile` the
+        episode reads its grasp height from.
+        """
+
+        profile = {"grasp_z": 0.01}
+
         def __init__(self):
             self.targets: list[tuple[float, float, float]] = []
             self.labels: list[str] = []
@@ -535,6 +543,12 @@ def plot_phase_keyframes(
 
         def open_gripper(self):
             pass
+
+        def ready_gripper(self):
+            pass
+
+        def converge_to_pose(self, pose, tol=0.003, max_steps=60):
+            return 0.0
 
         def hold(self, n_steps=30):
             pass

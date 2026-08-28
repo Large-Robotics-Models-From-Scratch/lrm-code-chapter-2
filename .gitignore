@@ -36,6 +36,11 @@ Thumbs.db
 # Local agent config overrides
 .lrm-agents.yml
 
+# Third-party source checkouts (author-side only). The ManiSkill fork
+# lives here while the SO-101 PR is in flight; readers get ManiSkill as
+# an installed package via the [sim] extra, never from this tree.
+third_party/
+
 # Claude Code symlinks (set up locally per machine via program.md)
 # Note: .claude/agents/chapter-02-guide.md is a symlink to the
 # canonical agent at agents/chapter-02-guide.md, which IS committed.

@@ -22,11 +22,22 @@ dependencies = [
 # Colab readers must run the 7-cell Vulkan setup documented in the
 # README before this extra is usable.
 sim = [
-    "mani-skill==3.0.1",
+    # Pinned to our ManiSkill fork, which adds the SO-101 arm and
+    # PickCubeSO101-v1. Upstream has no SO-101 (PR #1171 stalled), so the
+    # fork is the only way to run the arm this chapter's hardware target
+    # actually uses. Pinned by commit, not branch, so installs stay
+    # reproducible. Revert to "mani-skill==3.0.1" once the PR merges.
+    "mani-skill @ git+https://github.com/Large-Robotics-Models-From-Scratch/ManiSkill.git@685264f2c97d46d9bbed9ff4dca46fb9b1649019",
 ]
 # Dataset stack. Targets the lerobot 0.5.1 API for SO-101 datasets.
 data = [
     "lerobot==0.5.1",
+]
+# Vision-language-action policies. `lerobot[smolvla]` pulls transformers
+# and the SmolVLM backbone, which the [data] extra alone does not. Needed
+# only to run ch02.vla_rollout, not for the dataset or pipeline listings.
+vla = [
+    "lerobot[smolvla]==0.5.1",
 ]
 # Developer tooling.
 dev = [
