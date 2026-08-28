@@ -137,7 +137,11 @@ def build_batch(
             for v in views
         ]
     keys = image_keys or [f"observation.images.{c}" for c in CAMERAS]
-    batch = {k: views[i % len(views)] for i, k in enumerate(keys)}
+    # Fill only as many slots as we have real views. A checkpoint may
+    # declare more camera slots than it was trained with -- SmolVLA masks
+    # the absent ones -- and handing a duplicate view to a slot that was
+    # empty during training is an input the policy has never seen.
+    batch = {k: views[i] for i, k in enumerate(keys[:len(views)])}
     batch["observation.state"] = bridge.sim_to_policy(obs["agent"]["qpos"])
     batch["task"] = [task]
     return batch
