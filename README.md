@@ -60,9 +60,10 @@ brew install ffmpeg
 
 Software rendering via mesa's `llvmpipe` is enough for state-mode env stepping. A real GPU is recommended for RGB rendering at speed.
 
-### Step 2 — Python 3.12
+### Step 2 — Python 3.12 or 3.13
 
-Pinned to match `lerobot==0.5.1`'s metadata constraints. 3.10/3.11 won't resolve; 3.13 is too new for `lerobot`.
+`lerobot==0.5.1` supports Python 3.12 and 3.13. Python 3.10/3.11 will not
+resolve.
 
 ### Step 3 — Clone the repo
 

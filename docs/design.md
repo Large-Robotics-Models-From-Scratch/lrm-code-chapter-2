@@ -294,7 +294,9 @@ One line in the README: "Run `pytest tests/` after install to smoke-test your se
 
 ### Python version
 
-**3.12 only** (`>=3.12,<3.13`). `lerobot` 0.5.1 declares `requires_python = ">=3.12"`, and `lrm-code-agents/defaults.yml` locks 3.12 for resource-check. Colab supports 3.12 in current runtimes.
+**3.12 or 3.13** (`>=3.12,<3.14`). `lerobot` 0.5.1 declares
+`requires_python = ">=3.12"` and publishes Python 3.13 support, so the
+Colab runtime is covered alongside the project's local Python 3.12 setup.
 
 ### Packaging
 
@@ -303,7 +305,7 @@ One line in the README: "Run `pytest tests/` after install to smoke-test your se
 ```toml
 [project]
 name = "lrm-ch02"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "torch>=2.1,<3.0",
     "numpy>=1.24,<3.0",
