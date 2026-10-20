@@ -27,7 +27,7 @@ sim = [
     # fork is the only way to run the arm this chapter's hardware target
     # actually uses. Pinned by commit, not branch, so installs stay
     # reproducible. Revert to "mani-skill==3.0.1" once the PR merges.
-    "mani-skill @ git+https://github.com/Large-Robotics-Models-From-Scratch/ManiSkill.git@685264f2c97d46d9bbed9ff4dca46fb9b1649019",
+    "mani-skill @ git+https://github.com/Large-Robotics-Models-From-Scratch/ManiSkill.git@b38a4759e70e7aeff1356f46e5c3aa19771b1082",
 ]
 # Dataset stack. Targets the lerobot 0.5.1 API for SO-101 datasets.
 data = [
