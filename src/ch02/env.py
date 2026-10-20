@@ -1,13 +1,13 @@
-"""SO-100 pick-and-place environment + random-agent baseline.
+"""SO-101 pick-and-place environment + random-agent baseline.
 
-Wraps ManiSkill3's PickCubeSO100-v1 task in a thin factory so the
+Wraps ManiSkill3's PickCubeSO101-v1 task in a thin factory so the
 notebook, tests, and the scripted-agent eval all construct the env
 the same way. The random-agent loop is Listing 2.2 from the chapter
 and establishes the performance floor every learned policy must clear.
 """
 
 import gymnasium as gym
-import mani_skill.envs  # noqa: F401 — registers PickCubeSO100-v1
+import mani_skill.envs  # noqa: F401 — registers PickCubeSO101-v1
 import numpy as np
 
 from ch02._metrics import _episode_success
@@ -18,7 +18,7 @@ def make_env(
     control_mode: str = "pd_joint_delta_pos",
     render_mode: str = "rgb_array",
 ) -> gym.Env:
-    """Construct the PickCubeSO100-v1 environment.
+    """Construct the PickCubeSO101-v1 environment.
 
     Args:
         obs_mode: "state", "rgb", "rgbd", or "state_dict". Use "state"
@@ -30,7 +30,7 @@ def make_env(
         A Gymnasium env. Seed via `env.reset(seed=...)`.
     """
     return gym.make(
-        "PickCubeSO100-v1",
+        "PickCubeSO101-v1",
         obs_mode=obs_mode,
         control_mode=control_mode,
         render_mode=render_mode,

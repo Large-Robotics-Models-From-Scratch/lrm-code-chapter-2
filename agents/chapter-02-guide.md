@@ -25,7 +25,7 @@ You are **not** a general tutor for the rest of the book. Your scope ends at the
 Assume the reader has Chapter 1's material; don't recap it.
 
 - **VLA framing**: a robot policy is `(observations, language) → actions`.
-- **Embodiment commitment**: SO-100 in sim, SO-101 on hardware, with the small kinematic gap addressed in Chapter 9.
+- **Embodiment commitment**: SO-101 in sim and on hardware — the same arm as the expert dataset.
 - **Book roadmap**: Foundations (Ch 1–2, *we are here*) → Architecture & Imitation (3–5) → Scaling (6–7) → Advanced (8–9) → Deployment (10–11).
 
 ## What this chapter hands forward (to Chapter 3)
@@ -44,7 +44,7 @@ from ch02 import (
 
 These five names are the **frozen export contract**. If a reader hits an `ImportError` here, something in this chapter renamed a symbol — flag it as a regression rather than improvising a fix.
 
-One non-obvious handoff: Chapter 4's BC eval is **action MSE on a held-out dataset split**, *not* rollout success on `PickCubeSO100-v1`. The §2.6 callout explains why (sim env and dataset are different tasks). If the reader asks "how do I evaluate the policy I'll train in Chapter 3?" — that's the short answer.
+One non-obvious handoff: Chapter 4's BC eval is **action MSE on a held-out dataset split**, *not* rollout success on `PickCubeSO101-v1`. The §2.6 callout explains why (sim env and dataset are different tasks). If the reader asks "how do I evaluate the policy I'll train in Chapter 3?" — that's the short answer.
 
 ---
 
@@ -52,7 +52,7 @@ One non-obvious handoff: Chapter 4's BC eval is **action MSE on a held-out datas
 
 Chapter 2 covers five things, in order:
 
-1. **The SO-100 pick-and-place environment** (§2.1) — installing `lerobot` and `mani-skill`, creating the `PickCubeSO100-v1` env, the Gymnasium reset/step/done loop, and a random-agent baseline.
+1. **The SO-101 pick-and-place environment** (§2.1) — installing `lerobot` and `mani-skill`, creating the `PickCubeSO101-v1` env, the Gymnasium reset/step/done loop, and a random-agent baseline.
 2. **A scripted policy** (§2.2) — ManiSkill's motion planner driving seven Cartesian keyframes (approach → descend → grasp → lift → transport → place → release) and its failure modes.
 3. **The LeRobot dataset standard** (§2.3) — loading the `svla_so101_pickplace` SO-101 expert dataset from the Hub, the feature schema, and `delta_timestamps`.
 4. **Visualizing the data** (§2.4) — expert keyframes and per-joint action distributions.

@@ -7,13 +7,13 @@ Run from the repo root:
 
 Steps 1-3 use obs_mode="state" and work without Vulkan rendering.
 Step 4 attempts obs_mode="rgb" + a render() call and saves a PNG to
-/tmp/so100_render.png; this needs a working Vulkan driver (hardware
+/tmp/so101_render.png; this needs a working Vulkan driver (hardware
 or software via mesa). The script exits non-zero on any failure.
 """
 
 import sys
 
-RENDER_OUT = "/tmp/so100_render.png"
+RENDER_OUT = "/tmp/so101_render.png"
 
 
 def main() -> int:
@@ -28,7 +28,7 @@ def main() -> int:
         return 1
     print("  ok")
 
-    print("[2/4] Constructing PickCubeSO100-v1 (obs_mode='state') ...")
+    print("[2/4] Constructing PickCubeSO101-v1 (obs_mode='state') ...")
     try:
         env = make_env(obs_mode="state", render_mode=None)
     except Exception as exc:
@@ -102,7 +102,7 @@ def main() -> int:
 
     print(
         "\n=== PASS — env + 6-DOF action + RGB render all work ===\n"
-        f"open {RENDER_OUT} to see the rendered SO-100 scene"
+        f"open {RENDER_OUT} to see the rendered SO-101 scene"
     )
     return 0
 

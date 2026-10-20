@@ -2,7 +2,7 @@
 
 Companion code for **Chapter 2: Simulation & Data** of *Build a Large Robot Model (From Scratch)*.
 
-This repo contains the runnable code, tests, and figure-generation notebooks for everything the reader builds in Chapter 2: the SO-100 pick-and-place sim wrapper, a multi-phase scripted policy baseline, the LeRobot dataset loader, and the normalized DataLoader that downstream chapters depend on. The simulator is **ManiSkill3** (SAPIEN-based, GPU-parallelized); the carrier embodiment is the **SO-100 arm** in sim transitioning to **SO-101 hardware** in the later deployment chapters — the same low-cost 6-DOF arm with parallel-jaw gripper used through Chapter 11.
+This repo contains the runnable code, tests, and figure-generation notebooks for everything the reader builds in Chapter 2: the SO-101 pick-and-place sim wrapper, a multi-phase scripted policy baseline, the LeRobot dataset loader, and the normalized DataLoader that downstream chapters depend on. The simulator is **ManiSkill3** (SAPIEN-based, GPU-parallelized); the carrier embodiment is the **SO-101 arm**, in sim and on hardware in the later deployment chapters — the low-cost 6-DOF arm with parallel-jaw gripper used through Chapter 11.
 
 ## Two reader paths
 

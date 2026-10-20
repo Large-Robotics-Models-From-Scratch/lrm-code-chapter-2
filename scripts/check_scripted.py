@@ -5,7 +5,7 @@ Run from the repo root:
 
     python scripts/check_scripted.py
 
-Constructs PickCubeSO100-v1 in state mode (no rendering needed),
+Constructs PickCubeSO101-v1 in state mode (no rendering needed),
 then runs ManiSkill's motion-planner-backed 7-phase scripted policy
 for a few episodes. Prints success rate. Exits non-zero on failure.
 """
@@ -27,9 +27,12 @@ def main() -> int:
     print("=== PR 3 scripted-policy smoke check ===\n")
     print("[1/3] Imports ok")
 
-    print("[2/3] Building env (state mode, default joint control) ...")
+    print("[2/3] Building env (state mode, absolute joint control) ...")
     try:
-        env = make_env(obs_mode="state", render_mode=None)
+        env = make_env(
+            obs_mode="state", control_mode="pd_joint_pos",
+            render_mode=None,
+        )
     except Exception as exc:
         print(f"  FAIL: env construction error: {exc}")
         return 1
